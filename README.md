@@ -11,8 +11,6 @@ Monorepo para a fundação de um sistema de monitoramento de barramento CAN. Nes
 
 ```text
 .
-├── .agents/          # Contexto futuro para agentes de desenvolvimento
-├── .vscode/          # Configuração compartilhada do editor
 ├── backend/          # Pacote Python com layout src
 │   ├── src/can_monitor/
 │   └── tests/
