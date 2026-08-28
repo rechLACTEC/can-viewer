@@ -24,16 +24,17 @@ htmlcov/
 *.symbols
 *.map.json
 
-# IDE (shared VS Code configuration is explicitly allowed)
+# Local agent and editor configuration
+/.agents/
+/.vscode/
+
+# IDE
 .idea/
 *.iml
 *.ipr
 *.iws
 *.swp
 *~
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
 
 # Operating systems
 .DS_Store
