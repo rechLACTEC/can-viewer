@@ -1,0 +1,45 @@
+# Python
+**/.venv/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Flutter / Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/build/
+**/coverage/
+**/ios/Flutter/.last_build_id
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+*.symbols
+*.map.json
+
+# IDE (shared VS Code configuration is explicitly allowed)
+.idea/
+*.iml
+*.ipr
+*.iws
+*.swp
+*~
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
