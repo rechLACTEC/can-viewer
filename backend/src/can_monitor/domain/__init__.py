@@ -1,0 +1,1 @@
+"""CAN domain package."""

@@ -1,50 +1,51 @@
 # CAN Viewer
 
-Monorepo para a fundação de um sistema de monitoramento de barramento CAN. Nesta etapa, o projeto contém somente as bases independentes do backend e do frontend; aquisição CAN e comunicação entre os componentes serão definidas posteriormente.
+Monitor CAN funcional com backend Python/SocketCAN e frontend Flutter Web. O backend descobre interfaces Linux, controla aquisição e transmissão, calcula métricas de timing e entrega frames em tempo real; o Flutter permanece remoto e nunca acessa diretamente o barramento.
 
 ## Tecnologias
 
-- **Backend:** Python 3.12, gerenciado exclusivamente com [uv](https://docs.astral.sh/uv/)
-- **Frontend:** Flutter e Dart
+- **Backend:** Python 3.12, FastAPI, `python-can`/SocketCAN e `uv`
+- **Frontend:** Flutter/Dart, HTTP e WebSocket
 
 ## Estrutura
 
 ```text
 .
-├── backend/          # Pacote Python com layout src
-│   ├── src/can_monitor/
-│   └── tests/
-└── frontend/         # Aplicação Flutter padrão
+├── backend/          # Domínio, serviço de sessão, adaptador SocketCAN e API
+├── frontend/         # Aplicação Flutter Web/mobile
+├── docs/             # Reunião técnica, contrato, QA e ADRs
+└── scripts/          # Configuração reversível de vcan para desenvolvimento
 ```
 
 ## Requisitos
 
-- Git
-- uv 0.9 ou mais recente
-- Python 3.12 ou compatível
+- Linux para SocketCAN ou `vcan`
+- uv 0.9 ou mais recente e Python 3.12+
 - Flutter estável com Dart compatível
 
 ## Backend
 
-Na raiz do repositório:
-
 ```bash
 cd backend
-uv sync
-uv run python -c "import can_monitor"
-uv run python -m unittest discover -s tests
+uv sync --dev
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q
+uv run uvicorn can_monitor.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-O `uv sync` cria o ambiente local em `backend/.venv` e instala o pacote a partir do `uv.lock`.
+Para criar `vcan0` sem instalar pacotes nem executar `sudo` automaticamente:
 
-## Frontend
+```bash
+./scripts/setup-vcan.sh up vcan0
+```
+
+## Frontend Web
 
 ```bash
 cd frontend
 flutter pub get
 flutter analyze
 flutter test
-flutter run
+flutter run -d chrome --dart-define=CAN_API_BASE_URL=http://localhost:8000
 ```
 
-Selecione um dispositivo compatível quando solicitado por `flutter run`.
+Consulte [a documentação do backend](backend/README.md), o [contrato da API](docs/api-contract.md) e os [ADRs](docs/adr/) para detalhes de segurança, filtros, timestamps e limitações de medição de perda.
