@@ -1,11 +1,13 @@
 {
   "files.exclude": {
+    "**/.*": false,
     "**/.git": true,
     "**/.agents": false,
     "**/.github": false,
     "**/.vscode": false,
     "**/.env.example": false
   },
+  "explorer.excludeGitIgnore": false,
   "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
   "python.terminal.activateEnvironment": true,
   "editor.formatOnSave": true,
