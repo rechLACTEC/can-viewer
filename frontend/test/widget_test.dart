@@ -117,6 +117,22 @@ void main() {
     );
     expect(find.byKey(const Key('show-binary-toggle')), findsNothing);
     expect(
+      tester
+          .widget<SizedBox>(
+            find.byKey(const Key('payload-representation-field')),
+          )
+          .width,
+      104,
+    );
+    expect(
+      tester
+          .widget<Padding>(
+            find.byKey(const Key('payload-representation-control')),
+          )
+          .padding,
+      const EdgeInsets.only(right: 8),
+    );
+    expect(
       find.descendant(
         of: find.byKey(const Key('payload-representation-selector')),
         matching: find.text('NONE'),
@@ -221,6 +237,22 @@ void main() {
       tester.widget<Switch>(find.byKey(const Key('auto-scroll-toggle'))).value,
       isTrue,
     );
+
+    await tester.tap(find.byKey(const Key('trace-frame-40')));
+    await tester.pump();
+    expect(find.byKey(const Key('close-frame-inspector')), findsOneWidget);
+    expect(find.textContaining('seq 40'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('close-frame-inspector')));
+    await tester.pump();
+    expect(controller.selectedFrame, isNull);
+    expect(find.byKey(const Key('close-frame-inspector')), findsNothing);
+
+    await tester.ensureVisible(find.byKey(const Key('trace-frame-39')));
+    await tester.tap(find.byKey(const Key('trace-frame-39')));
+    await tester.pump();
+    expect(find.byKey(const Key('close-frame-inspector')), findsOneWidget);
+    expect(find.textContaining('seq 39'), findsOneWidget);
 
     expect(controller.isConnected, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());

@@ -569,7 +569,10 @@ class _MonitorPanelState extends State<MonitorPanel> {
                 ),
               ),
               if (controller.selectedFrame case final frame?)
-                _FrameInspector(frame: frame),
+                _FrameInspector(
+                  frame: frame,
+                  onClose: () => controller.selectFrame(null),
+                ),
             ],
           ),
         ),
@@ -611,30 +614,39 @@ class _PayloadRepresentationSelector extends StatelessWidget {
   final ValueChanged<_PayloadRepresentation> onChanged;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(
-        'Representação adicional',
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
-      const SizedBox(width: 8),
-      DropdownButton<_PayloadRepresentation>(
-        key: const Key('payload-representation-selector'),
-        value: value,
-        onChanged: (selected) {
-          if (selected != null) onChanged(selected);
-        },
-        items: _PayloadRepresentation.values
-            .map(
-              (representation) => DropdownMenuItem(
-                value: representation,
-                child: Text(representation.label),
-              ),
-            )
-            .toList(growable: false),
-      ),
-    ],
+  Widget build(BuildContext context) => Padding(
+    key: const Key('payload-representation-control'),
+    padding: const EdgeInsets.only(right: 8),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Representação adicional',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          key: const Key('payload-representation-field'),
+          width: 104,
+          child: DropdownButton<_PayloadRepresentation>(
+            key: const Key('payload-representation-selector'),
+            value: value,
+            isExpanded: true,
+            onChanged: (selected) {
+              if (selected != null) onChanged(selected);
+            },
+            items: _PayloadRepresentation.values
+                .map(
+                  (representation) => DropdownMenuItem(
+                    value: representation,
+                    child: Text(representation.label),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -682,6 +694,7 @@ class _TraceView extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final frame = controller.visibleTrace[index];
                   return InkWell(
+                    key: Key('trace-frame-${frame.sequence}'),
                     onTap: () => controller.selectFrame(frame),
                     child: _DataRowCells(
                       error: frame.isErrorFrame,
@@ -857,8 +870,9 @@ class _DataRowCells extends StatelessWidget {
 }
 
 class _FrameInspector extends StatelessWidget {
-  const _FrameInspector({required this.frame});
+  const _FrameInspector({required this.frame, required this.onClose});
   final CanFrame frame;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -871,10 +885,27 @@ class _FrameInspector extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '${frame.idText} · ${frame.isExtended ? 'EXT' : 'STD'} · '
-          '${frame.isFd ? 'CAN FD' : 'CAN'} · ${frame.direction.name.toUpperCase()}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                '${frame.idText} · ${frame.isExtended ? 'EXT' : 'STD'} · '
+                '${frame.isFd ? 'CAN FD' : 'CAN'} · '
+                '${frame.direction.name.toUpperCase()}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            IconButton(
+              key: const Key('close-frame-inspector'),
+              onPressed: onClose,
+              tooltip: 'Fechar detalhes',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: const Icon(Icons.close, size: 18),
+            ),
+          ],
         ),
         const SizedBox(height: 6),
         SelectableText('HEX  ${frame.hexText}', style: _mono),
