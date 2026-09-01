@@ -430,7 +430,18 @@ class _MonitorPanelState extends State<MonitorPanel> {
 
   void _setAutoScroll(bool value) {
     setState(() => _autoScroll = value);
+    final shouldPauseDisplay = !value;
+    if (controller.displayPaused != shouldPauseDisplay) {
+      controller.togglePause();
+    }
     if (value) _scheduleScrollToLatest();
+  }
+
+  void _toggleDisplayPause() {
+    final willPause = !controller.displayPaused;
+    setState(() => _autoScroll = !willPause);
+    controller.togglePause();
+    if (!willPause) _scheduleScrollToLatest();
   }
 
   @override
@@ -473,7 +484,7 @@ class _MonitorPanelState extends State<MonitorPanel> {
                     key: const Key('pause-display'),
                     onPressed:
                         controller.isConnected || controller.displayPaused
-                        ? controller.togglePause
+                        ? _toggleDisplayPause
                         : null,
                     icon: Icon(
                       controller.displayPaused ? Icons.play_arrow : Icons.pause,

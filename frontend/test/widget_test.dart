@@ -94,7 +94,7 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('toggles binary payload and auto scroll without pausing frames', (
+  testWidgets('auto scroll freezes only the visual snapshot and resumes live', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1200, 900));
@@ -145,6 +145,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('auto-scroll-toggle')));
     await tester.pump();
+    expect(controller.displayPaused, isTrue);
+    final frozenSequences = controller.visibleTrace
+        .map((frame) => frame.sequence)
+        .toList(growable: false);
     scrollController.jumpTo(0);
     await tester.pump();
     streams.connection.controller.add(
@@ -156,15 +160,53 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
     await tester.pump();
     expect(controller.receivedCount, 40);
+    expect(controller.framesWhilePaused, 10);
+    expect(
+      controller.visibleTrace.map((frame) => frame.sequence),
+      frozenSequences,
+    );
+    expect(controller.visibleTrace.last.sequence, 30);
     expect(scrollController.offset, 0);
-
-    await tester.tap(find.byKey(const Key('auto-scroll-toggle')));
-    await tester.pump();
-    expect(scrollController.offset, scrollController.position.maxScrollExtent);
 
     await tester.tap(find.byKey(const Key('show-binary-toggle')));
     await tester.pump();
     expect(find.text('Dados BIN'), findsNothing);
+    expect(
+      controller.visibleTrace.map((frame) => frame.sequence),
+      frozenSequences,
+    );
+
+    await tester.tap(find.byKey(const Key('show-binary-toggle')));
+    await tester.pump();
+    expect(find.text('Dados BIN'), findsOneWidget);
+    expect(
+      controller.visibleTrace.map((frame) => frame.sequence),
+      frozenSequences,
+    );
+
+    await tester.tap(find.byKey(const Key('auto-scroll-toggle')));
+    await tester.pump();
+    expect(controller.displayPaused, isFalse);
+    expect(controller.framesWhilePaused, 0);
+    expect(controller.visibleTrace, hasLength(40));
+    expect(controller.visibleTrace.last.sequence, 40);
+    expect(scrollController.offset, scrollController.position.maxScrollExtent);
+
+    await tester.tap(find.byKey(const Key('pause-display')));
+    await tester.pump();
+    expect(controller.displayPaused, isTrue);
+    expect(
+      tester.widget<Switch>(find.byKey(const Key('auto-scroll-toggle'))).value,
+      isFalse,
+    );
+    await tester.tap(find.byKey(const Key('pause-display')));
+    await tester.pump();
+    expect(controller.displayPaused, isFalse);
+    expect(
+      tester.widget<Switch>(find.byKey(const Key('auto-scroll-toggle'))).value,
+      isTrue,
+    );
+
     expect(controller.isConnected, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
