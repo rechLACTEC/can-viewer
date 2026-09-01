@@ -27,6 +27,7 @@ htmlcov/
 # Local agent and editor configuration
 /.agents/
 /.vscode/
+/docs/
 
 # IDE
 .idea/
