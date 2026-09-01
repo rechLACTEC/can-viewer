@@ -115,11 +115,16 @@ void main() {
       tester.widget<Switch>(find.byKey(const Key('auto-scroll-toggle'))).value,
       isTrue,
     );
+    expect(find.byKey(const Key('show-binary-toggle')), findsNothing);
     expect(
-      tester.widget<Switch>(find.byKey(const Key('show-binary-toggle'))).value,
-      isFalse,
+      find.descendant(
+        of: find.byKey(const Key('payload-representation-selector')),
+        matching: find.text('NONE'),
+      ),
+      findsOneWidget,
     );
     expect(find.text('Dados BIN'), findsNothing);
+    expect(find.text('Dados DEC'), findsNothing);
 
     streams.connection.controller.add(
       testBatch([
@@ -137,8 +142,10 @@ void main() {
     final scrollController = traceList.controller!;
     expect(scrollController.offset, scrollController.position.maxScrollExtent);
 
-    await tester.tap(find.byKey(const Key('show-binary-toggle')));
-    await tester.pump();
+    await tester.tap(find.byKey(const Key('payload-representation-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BIN').last);
+    await tester.pumpAndSettle();
     expect(find.text('Dados HEX'), findsWidgets);
     expect(find.text('Dados BIN'), findsOneWidget);
     expect(find.text('00000001 00001010 11111111'), findsWidgets);
@@ -168,17 +175,25 @@ void main() {
     expect(controller.visibleTrace.last.sequence, 30);
     expect(scrollController.offset, 0);
 
-    await tester.tap(find.byKey(const Key('show-binary-toggle')));
-    await tester.pump();
+    await tester.tap(find.byKey(const Key('payload-representation-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DEC').last);
+    await tester.pumpAndSettle();
     expect(find.text('Dados BIN'), findsNothing);
+    expect(find.text('Dados DEC'), findsOneWidget);
+    expect(find.text('1 10 255'), findsWidgets);
     expect(
       controller.visibleTrace.map((frame) => frame.sequence),
       frozenSequences,
     );
 
-    await tester.tap(find.byKey(const Key('show-binary-toggle')));
-    await tester.pump();
-    expect(find.text('Dados BIN'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('payload-representation-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('NONE').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Dados BIN'), findsNothing);
+    expect(find.text('Dados DEC'), findsNothing);
+    expect(find.text('Dados HEX'), findsWidgets);
     expect(
       controller.visibleTrace.map((frame) => frame.sequence),
       frozenSequences,

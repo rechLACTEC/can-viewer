@@ -131,6 +131,7 @@ class CanFrame {
       .join(' ');
   String get binaryText =>
       data.map((byte) => byte.toRadixString(2).padLeft(8, '0')).join(' ');
+  String get decimalText => data.join(' ');
   double get seconds => timestampNanoseconds.toDouble() / 1000000000;
   BigInt get timingNanoseconds => ingressMonotonicNanoseconds;
 }

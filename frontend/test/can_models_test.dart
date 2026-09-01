@@ -23,6 +23,7 @@ void main() {
       expect(frame.timestampNanoseconds, BigInt.parse('9007199254740993123'));
       expect(frame.hexText, '01 0A FF');
       expect(frame.binaryText, '00000001 00001010 11111111');
+      expect(frame.decimalText, '1 10 255');
       expect(frame.idText, '0x123');
       expect(frame.sequence, 7);
       expect(frame.filterRevision, 2);
@@ -60,6 +61,7 @@ void main() {
 
       expect(frame.hexText, '00 FF 01 80');
       expect(frame.binaryText, '00000000 11111111 00000001 10000000');
+      expect(frame.decimalText, '0 255 1 128');
     });
 
     test('matches backend CAN and CAN FD payload lengths', () {

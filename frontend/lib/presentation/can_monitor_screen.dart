@@ -399,10 +399,38 @@ class MonitorPanel extends StatefulWidget {
   State<MonitorPanel> createState() => _MonitorPanelState();
 }
 
+enum _PayloadRepresentation { none, binary, decimal }
+
+extension on _PayloadRepresentation {
+  String get label => switch (this) {
+    _PayloadRepresentation.none => 'NONE',
+    _PayloadRepresentation.binary => 'BIN',
+    _PayloadRepresentation.decimal => 'DEC',
+  };
+
+  String? get columnLabel => switch (this) {
+    _PayloadRepresentation.none => null,
+    _PayloadRepresentation.binary => 'Dados BIN',
+    _PayloadRepresentation.decimal => 'Dados DEC',
+  };
+
+  double get columnWidth => switch (this) {
+    _PayloadRepresentation.none => 0,
+    _PayloadRepresentation.binary => 620,
+    _PayloadRepresentation.decimal => 385,
+  };
+
+  String format(CanFrame frame) => switch (this) {
+    _PayloadRepresentation.none => '',
+    _PayloadRepresentation.binary => frame.binaryText,
+    _PayloadRepresentation.decimal => frame.decimalText,
+  };
+}
+
 class _MonitorPanelState extends State<MonitorPanel> {
   final ScrollController _traceScrollController = ScrollController();
   bool _autoScroll = true;
-  bool _showBinary = false;
+  _PayloadRepresentation _payloadRepresentation = _PayloadRepresentation.none;
   bool _scrollScheduled = false;
   int? _lastVisibleSequence;
 
@@ -509,11 +537,10 @@ class _MonitorPanelState extends State<MonitorPanel> {
                       value: _autoScroll,
                       onChanged: _setAutoScroll,
                     ),
-                    _MonitorToggle(
-                      label: 'Exibir binário',
-                      switchKey: const Key('show-binary-toggle'),
-                      value: _showBinary,
-                      onChanged: (value) => setState(() => _showBinary = value),
+                    _PayloadRepresentationSelector(
+                      value: _payloadRepresentation,
+                      onChanged: (value) =>
+                          setState(() => _payloadRepresentation = value),
                     ),
                   ],
                 ),
@@ -532,11 +559,11 @@ class _MonitorPanelState extends State<MonitorPanel> {
                     _TraceView(
                       controller: controller,
                       scrollController: _traceScrollController,
-                      showBinary: _showBinary,
+                      payloadRepresentation: _payloadRepresentation,
                     ),
                     _AggregatedView(
                       controller: controller,
-                      showBinary: _showBinary,
+                      payloadRepresentation: _payloadRepresentation,
                     ),
                   ],
                 ),
@@ -574,15 +601,52 @@ class _MonitorToggle extends StatelessWidget {
   );
 }
 
+class _PayloadRepresentationSelector extends StatelessWidget {
+  const _PayloadRepresentationSelector({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final _PayloadRepresentation value;
+  final ValueChanged<_PayloadRepresentation> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        'Representação adicional',
+        style: Theme.of(context).textTheme.bodyMedium,
+      ),
+      const SizedBox(width: 8),
+      DropdownButton<_PayloadRepresentation>(
+        key: const Key('payload-representation-selector'),
+        value: value,
+        onChanged: (selected) {
+          if (selected != null) onChanged(selected);
+        },
+        items: _PayloadRepresentation.values
+            .map(
+              (representation) => DropdownMenuItem(
+                value: representation,
+                child: Text(representation.label),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    ],
+  );
+}
+
 class _TraceView extends StatelessWidget {
   const _TraceView({
     required this.controller,
     required this.scrollController,
-    required this.showBinary,
+    required this.payloadRepresentation,
   });
   final CanMonitorController controller;
   final ScrollController scrollController;
-  final bool showBinary;
+  final _PayloadRepresentation payloadRepresentation;
 
   @override
   Widget build(BuildContext context) {
@@ -594,7 +658,7 @@ class _TraceView extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
-        width: showBinary ? 1520 : 900,
+        width: 900 + payloadRepresentation.columnWidth,
         child: Column(
           children: [
             _TableHeader(
@@ -605,7 +669,8 @@ class _TraceView extends StatelessWidget {
                 const ('Tipo', 90),
                 const ('DLC', 55),
                 const ('Dados HEX', 400),
-                if (showBinary) const ('Dados BIN', 620),
+                if (payloadRepresentation.columnLabel case final label?)
+                  (label, payloadRepresentation.columnWidth),
               ],
             ),
             Expanded(
@@ -636,12 +701,13 @@ class _TraceView extends StatelessWidget {
                           frame.isErrorFrame ? 'ERROR FRAME' : frame.hexText,
                           400,
                         ),
-                        if (showBinary)
+                        if (payloadRepresentation !=
+                            _PayloadRepresentation.none)
                           (
                             frame.isErrorFrame
                                 ? 'ERROR FRAME'
-                                : frame.binaryText,
-                            620,
+                                : payloadRepresentation.format(frame),
+                            payloadRepresentation.columnWidth,
                           ),
                       ],
                     ),
@@ -657,9 +723,12 @@ class _TraceView extends StatelessWidget {
 }
 
 class _AggregatedView extends StatelessWidget {
-  const _AggregatedView({required this.controller, required this.showBinary});
+  const _AggregatedView({
+    required this.controller,
+    required this.payloadRepresentation,
+  });
   final CanMonitorController controller;
-  final bool showBinary;
+  final _PayloadRepresentation payloadRepresentation;
 
   @override
   Widget build(BuildContext context) {
@@ -669,7 +738,7 @@ class _AggregatedView extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
-        width: showBinary ? 1550 : 930,
+        width: 930 + payloadRepresentation.columnWidth,
         child: Column(
           children: [
             _TableHeader(
@@ -681,7 +750,8 @@ class _AggregatedView extends StatelessWidget {
                 const ('Δ ID', 90),
                 const ('Média', 90),
                 const ('Dados HEX', 385),
-                if (showBinary) const ('Dados BIN', 620),
+                if (payloadRepresentation.columnLabel case final label?)
+                  (label, payloadRepresentation.columnWidth),
               ],
             ),
             Expanded(
@@ -706,7 +776,12 @@ class _AggregatedView extends StatelessWidget {
                         (_number(stats.lastIntervalMs, 'ms'), 90),
                         (_number(stats.meanIntervalMs, 'ms'), 90),
                         (frame.hexText, 385),
-                        if (showBinary) (frame.binaryText, 620),
+                        if (payloadRepresentation !=
+                            _PayloadRepresentation.none)
+                          (
+                            payloadRepresentation.format(frame),
+                            payloadRepresentation.columnWidth,
+                          ),
                       ],
                     ),
                   );
