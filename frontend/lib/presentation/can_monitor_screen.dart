@@ -391,12 +391,58 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
   }
 }
 
-class MonitorPanel extends StatelessWidget {
+class MonitorPanel extends StatefulWidget {
   const MonitorPanel({super.key, required this.controller});
   final CanMonitorController controller;
 
   @override
+  State<MonitorPanel> createState() => _MonitorPanelState();
+}
+
+class _MonitorPanelState extends State<MonitorPanel> {
+  final ScrollController _traceScrollController = ScrollController();
+  bool _autoScroll = true;
+  bool _showBinary = false;
+  bool _scrollScheduled = false;
+  int? _lastVisibleSequence;
+
+  CanMonitorController get controller => widget.controller;
+
+  @override
+  void dispose() {
+    _traceScrollController.dispose();
+    super.dispose();
+  }
+
+  void _scheduleScrollToLatest() {
+    if (_scrollScheduled) return;
+    _scrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollScheduled = false;
+      if (!mounted || !_autoScroll || !_traceScrollController.hasClients) {
+        return;
+      }
+      _traceScrollController.jumpTo(
+        _traceScrollController.position.maxScrollExtent,
+      );
+    });
+  }
+
+  void _setAutoScroll(bool value) {
+    setState(() => _autoScroll = value);
+    if (value) _scheduleScrollToLatest();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final latestSequence = controller.visibleTrace.isEmpty
+        ? null
+        : controller.visibleTrace.last.sequence;
+    if (_autoScroll && latestSequence != _lastVisibleSequence) {
+      _scheduleScrollToLatest();
+    }
+    _lastVisibleSequence = latestSequence;
+
     return DefaultTabController(
       length: 2,
       child: Card(
@@ -440,6 +486,27 @@ class MonitorPanel extends StatelessWidget {
                   ),
                 ],
               ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _MonitorToggle(
+                      label: 'Auto rolagem',
+                      switchKey: const Key('auto-scroll-toggle'),
+                      value: _autoScroll,
+                      onChanged: _setAutoScroll,
+                    ),
+                    _MonitorToggle(
+                      label: 'Exibir binário',
+                      switchKey: const Key('show-binary-toggle'),
+                      value: _showBinary,
+                      onChanged: (value) => setState(() => _showBinary = value),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 8),
               const TabBar(
                 tabs: [
@@ -451,8 +518,15 @@ class MonitorPanel extends StatelessWidget {
               Expanded(
                 child: TabBarView(
                   children: [
-                    _TraceView(controller: controller),
-                    _AggregatedView(controller: controller),
+                    _TraceView(
+                      controller: controller,
+                      scrollController: _traceScrollController,
+                      showBinary: _showBinary,
+                    ),
+                    _AggregatedView(
+                      controller: controller,
+                      showBinary: _showBinary,
+                    ),
                   ],
                 ),
               ),
@@ -466,9 +540,38 @@ class MonitorPanel extends StatelessWidget {
   }
 }
 
+class _MonitorToggle extends StatelessWidget {
+  const _MonitorToggle({
+    required this.label,
+    required this.switchKey,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final Key switchKey;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(label, style: Theme.of(context).textTheme.bodyMedium),
+      Switch(key: switchKey, value: value, onChanged: onChanged),
+    ],
+  );
+}
+
 class _TraceView extends StatelessWidget {
-  const _TraceView({required this.controller});
+  const _TraceView({
+    required this.controller,
+    required this.scrollController,
+    required this.showBinary,
+  });
   final CanMonitorController controller;
+  final ScrollController scrollController;
+  final bool showBinary;
 
   @override
   Widget build(BuildContext context) {
@@ -480,22 +583,24 @@ class _TraceView extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
-        width: 900,
+        width: showBinary ? 1520 : 900,
         child: Column(
           children: [
-            const _TableHeader(
+            _TableHeader(
               columns: [
-                ('Tempo relativo', 130),
-                ('Dir.', 65),
-                ('ID', 120),
-                ('Tipo', 90),
-                ('DLC', 55),
-                ('Dados HEX', 400),
+                const ('Tempo relativo', 130),
+                const ('Dir.', 65),
+                const ('ID', 120),
+                const ('Tipo', 90),
+                const ('DLC', 55),
+                const ('Dados HEX', 400),
+                if (showBinary) const ('Dados BIN', 620),
               ],
             ),
             Expanded(
               child: ListView.builder(
                 key: const Key('trace-list'),
+                controller: scrollController,
                 itemCount: controller.visibleTrace.length,
                 itemExtent: 42,
                 itemBuilder: (context, index) {
@@ -520,6 +625,13 @@ class _TraceView extends StatelessWidget {
                           frame.isErrorFrame ? 'ERROR FRAME' : frame.hexText,
                           400,
                         ),
+                        if (showBinary)
+                          (
+                            frame.isErrorFrame
+                                ? 'ERROR FRAME'
+                                : frame.binaryText,
+                            620,
+                          ),
                       ],
                     ),
                   );
@@ -534,8 +646,9 @@ class _TraceView extends StatelessWidget {
 }
 
 class _AggregatedView extends StatelessWidget {
-  const _AggregatedView({required this.controller});
+  const _AggregatedView({required this.controller, required this.showBinary});
   final CanMonitorController controller;
+  final bool showBinary;
 
   @override
   Widget build(BuildContext context) {
@@ -545,18 +658,19 @@ class _AggregatedView extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
-        width: 930,
+        width: showBinary ? 1550 : 930,
         child: Column(
           children: [
-            const _TableHeader(
+            _TableHeader(
               columns: [
-                ('ID', 130),
-                ('Dir.', 60),
-                ('Count', 85),
-                ('Rate', 90),
-                ('Δ ID', 90),
-                ('Média', 90),
-                ('Dados HEX', 385),
+                const ('ID', 130),
+                const ('Dir.', 60),
+                const ('Count', 85),
+                const ('Rate', 90),
+                const ('Δ ID', 90),
+                const ('Média', 90),
+                const ('Dados HEX', 385),
+                if (showBinary) const ('Dados BIN', 620),
               ],
             ),
             Expanded(
@@ -581,6 +695,7 @@ class _AggregatedView extends StatelessWidget {
                         (_number(stats.lastIntervalMs, 'ms'), 90),
                         (_number(stats.meanIntervalMs, 'ms'), 90),
                         (frame.hexText, 385),
+                        if (showBinary) (frame.binaryText, 620),
                       ],
                     ),
                   );

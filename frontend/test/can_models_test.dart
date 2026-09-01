@@ -43,6 +43,25 @@ void main() {
       expect(() => parseHexBytes('GG'), throwsA(isA<FormatException>()));
     });
 
+    test('renders every payload byte with exactly eight binary digits', () {
+      final frame = CanFrame.fromJson({
+        'sequence': 1,
+        'filter_revision': 1,
+        'timestamp_ns': '1',
+        'ingress_monotonic_ns': '1',
+        'interface': 'vcan0',
+        'can_id': 1,
+        'is_extended_id': false,
+        'is_fd': false,
+        'dlc': 4,
+        'data_hex': '00FF0180',
+        'direction': 'rx',
+      });
+
+      expect(frame.hexText, '00 FF 01 80');
+      expect(frame.binaryText, '00000000 11111111 00000001 10000000');
+    });
+
     test('matches backend CAN and CAN FD payload lengths', () {
       expect(validatePayloadLength(8, isFd: false), isNull);
       expect(validatePayloadLength(9, isFd: false), isNotNull);
