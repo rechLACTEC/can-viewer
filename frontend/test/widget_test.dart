@@ -49,6 +49,18 @@ void main() {
     await tester.pumpWidget(
       CanMonitorApp(controller: controller, autoLoad: false),
     );
+    expect(find.text('Transmissão manual'), findsNothing);
+    expect(find.byKey(const Key('tx-id-input')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('open-transmission')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Transmissão CAN'), findsWidgets);
+    expect(find.text('Configuração do frame'), findsOneWidget);
+    expect(
+      find.text('A transmissão pode afetar equipamentos reais.'),
+      findsOneWidget,
+    );
     await tester.enterText(find.byKey(const Key('tx-id-input')), '123');
     await tester.enterText(
       find.byKey(const Key('tx-payload-input')),
@@ -64,6 +76,12 @@ void main() {
     await tester.tap(find.byKey(const Key('confirm-send')));
     await tester.pumpAndSettle();
     expect(api.sendCount, 1);
+
+    await tester.tap(find.byKey(const Key('back-to-monitor')));
+    await tester.pumpAndSettle();
+    expect(find.text('CAN Monitor'), findsOneWidget);
+    expect(find.byKey(const Key('tx-id-input')), findsNothing);
+    expect(controller.isConnected, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });

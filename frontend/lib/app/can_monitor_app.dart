@@ -5,6 +5,7 @@ import '../config/app_config.dart';
 import '../data/can_api.dart';
 import '../data/can_stream.dart';
 import '../presentation/can_monitor_screen.dart';
+import '../presentation/transmission_screen.dart';
 
 class CanMonitorApp extends StatefulWidget {
   const CanMonitorApp({super.key, this.controller, this.autoLoad = true});
@@ -65,6 +66,10 @@ class _CanMonitorAppState extends State<CanMonitorApp> {
         useMaterial3: true,
       ),
       home: CanMonitorScreen(controller: _controller),
+      routes: {
+        TransmissionScreen.routeName: (context) =>
+            TransmissionScreen(controller: _controller),
+      },
     );
   }
 }

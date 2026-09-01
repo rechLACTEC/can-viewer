@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../application/can_monitor_controller.dart';
 import '../domain/can_models.dart';
+import 'transmission_screen.dart';
 
 class CanMonitorScreen extends StatelessWidget {
   const CanMonitorScreen({super.key, required this.controller});
@@ -22,6 +23,14 @@ class CanMonitorScreen extends StatelessWidget {
             ],
           ),
           actions: [
+            TextButton.icon(
+              key: const Key('open-transmission'),
+              onPressed: () =>
+                  Navigator.of(context).pushNamed(TransmissionScreen.routeName),
+              icon: const Icon(Icons.send_outlined),
+              label: const Text('Transmissão'),
+            ),
+            const SizedBox(width: 8),
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: _ConnectionBadge(state: controller.connectionState),
@@ -85,13 +94,7 @@ class CanMonitorScreen extends StatelessWidget {
                             SizedBox(
                               width: 340,
                               child: SingleChildScrollView(
-                                child: Column(
-                                  children: [
-                                    ConnectionPanel(controller: controller),
-                                    const SizedBox(height: 16),
-                                    TransmissionPanel(controller: controller),
-                                  ],
-                                ),
+                                child: ConnectionPanel(controller: controller),
                               ),
                             ),
                             const SizedBox(width: 16),
@@ -106,8 +109,6 @@ class CanMonitorScreen extends StatelessWidget {
                       padding: const EdgeInsets.all(12),
                       children: [
                         ConnectionPanel(controller: controller),
-                        const SizedBox(height: 12),
-                        TransmissionPanel(controller: controller),
                         const SizedBox(height: 12),
                         SizedBox(
                           height: 650,
@@ -938,205 +939,6 @@ class _EmptyMonitor extends StatelessWidget {
       ],
     ),
   );
-}
-
-class TransmissionPanel extends StatefulWidget {
-  const TransmissionPanel({super.key, required this.controller});
-  final CanMonitorController controller;
-
-  @override
-  State<TransmissionPanel> createState() => _TransmissionPanelState();
-}
-
-class _TransmissionPanelState extends State<TransmissionPanel> {
-  final _formKey = GlobalKey<FormState>();
-  final _idController = TextEditingController();
-  final _payloadController = TextEditingController();
-  final _tokenController = TextEditingController();
-  bool _extended = false;
-  bool _fd = false;
-
-  @override
-  void dispose() {
-    _idController.dispose();
-    _payloadController.dispose();
-    _tokenController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _confirmAndSend() async {
-    if (!_formKey.currentState!.validate()) return;
-    final isFd = _fd && widget.controller.activeSessionFd;
-    final canId = parseCanId(_idController.text, extended: _extended);
-    final bytes = parseHexBytes(_payloadController.text);
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirmar transmissão CAN'),
-        content: Text(
-          'Enviar ${bytes.length} byte(s) para '
-          '${CanFilterId(canId: canId, isExtended: _extended).label} '
-          'como ${isFd ? 'CAN FD' : 'CAN clássico'}?\n\n'
-          '${_payloadController.text.toUpperCase()}',
-        ),
-        actions: [
-          TextButton(
-            autofocus: true,
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton.icon(
-            key: const Key('confirm-send'),
-            onPressed: () => Navigator.pop(context, true),
-            icon: const Icon(Icons.send),
-            label: const Text('Enviar uma vez'),
-          ),
-        ],
-      ),
-    );
-    if (accepted != true || !mounted) return;
-    try {
-      await widget.controller.sendFrame(
-        canId: canId,
-        isExtended: _extended,
-        isFd: isFd,
-        dataHex: _payloadController.text,
-        authorizationToken: _tokenController.text.trim().isEmpty
-            ? null
-            : _tokenController.text.trim(),
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Frame entregue ao backend para envio.'),
-          ),
-        );
-      }
-    } catch (_) {
-      // O banner persistente do controller apresenta o detalhe seguro.
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = widget.controller;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.send, color: Theme.of(context).colorScheme.error),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Transmissão manual',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Text('A transmissão pode afetar equipamentos reais.'),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      key: const Key('tx-id-input'),
-                      controller: _idController,
-                      decoration: const InputDecoration(
-                        labelText: 'CAN ID (HEX)',
-                      ),
-                      validator: (value) {
-                        try {
-                          parseCanId(value ?? '', extended: _extended);
-                          return null;
-                        } on FormatException catch (error) {
-                          return error.message;
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  DropdownButton<bool>(
-                    value: _extended,
-                    items: const [
-                      DropdownMenuItem(value: false, child: Text('STD')),
-                      DropdownMenuItem(value: true, child: Text('EXT')),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => _extended = value ?? false),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                key: const Key('tx-payload-input'),
-                controller: _payloadController,
-                decoration: const InputDecoration(
-                  labelText: 'Payload hexadecimal',
-                  hintText: '01 0A FF 20',
-                ),
-                maxLines: 2,
-                validator: (value) {
-                  try {
-                    final bytes = parseHexBytes(value ?? '');
-                    final isFd = _fd && controller.activeSessionFd;
-                    return validatePayloadLength(bytes.length, isFd: isFd);
-                  } on FormatException catch (error) {
-                    return error.message;
-                  }
-                },
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                key: const Key('tx-token-input'),
-                controller: _tokenController,
-                obscureText: true,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Token TX para interface física (opcional)',
-                ),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('CAN FD'),
-                subtitle: const Text(
-                  'Até 64 bytes; depende da interface/sessão.',
-                ),
-                value: _fd && controller.activeSessionFd,
-                onChanged: controller.activeSessionFd
-                    ? (value) => setState(() => _fd = value)
-                    : null,
-              ),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  key: const Key('send-button'),
-                  onPressed: controller.isConnected && !controller.sending
-                      ? _confirmAndSend
-                      : null,
-                  icon: controller.sending
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send),
-                  label: const Text('Revisar e enviar'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 const _mono = TextStyle(fontFamily: 'monospace');
