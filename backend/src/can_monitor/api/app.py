@@ -11,7 +11,7 @@ from typing import Annotated, Protocol
 from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from can_monitor.api.schemas import FilterRequest, SendFrameRequest, SessionCreateRequest
 from can_monitor.application.session import CanSessionManager
@@ -88,6 +88,9 @@ def create_app(
         virtual_tx_enabled=settings.virtual_tx_enabled,
         physical_tx_token=settings.physical_tx_token,
         tx_rate_limit_per_second=settings.tx_rate_limit_per_second,
+        recording_directory=settings.recording_directory,
+        recording_queue_size=settings.recording_queue_size,
+        recording_max_bytes=settings.recording_max_bytes,
     )
 
     @asynccontextmanager
@@ -198,6 +201,61 @@ def create_app(
         )
         await session.send(command, authorization_token=tx_token)
         return {"status": "submitted"}
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/recordings",
+        status_code=201,
+    )
+    async def start_recording(session_id: str) -> dict[str, object]:
+        return manager.start_recording(session_id).snapshot()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/recordings/{recording_id}/pause"
+    )
+    async def pause_recording(
+        session_id: str, recording_id: str
+    ) -> dict[str, object]:
+        recording = await manager.pause_recording(session_id, recording_id)
+        return recording.snapshot()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/recordings/{recording_id}/resume"
+    )
+    async def resume_recording(
+        session_id: str, recording_id: str
+    ) -> dict[str, object]:
+        return manager.resume_recording(session_id, recording_id).snapshot()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/recordings/{recording_id}/stop"
+    )
+    async def stop_recording(
+        session_id: str, recording_id: str
+    ) -> dict[str, object]:
+        recording = await manager.stop_recording(session_id, recording_id)
+        return recording.snapshot()
+
+    @app.get(
+        "/api/v1/can/sessions/{session_id}/recordings/{recording_id}"
+    )
+    async def get_recording(
+        session_id: str, recording_id: str
+    ) -> dict[str, object]:
+        return manager.get_recording(
+            recording_id, session_id=session_id
+        ).snapshot()
+
+    @app.get("/api/v1/can/recordings/{recording_id}/download")
+    async def download_recording(recording_id: str) -> FileResponse:
+        recording = manager.get_recording(recording_id)
+        path = recording.downloadable_path
+        filename = recording.snapshot()["filename"]
+        assert isinstance(filename, str)
+        return FileResponse(
+            path,
+            media_type="application/octet-stream",
+            filename=filename,
+        )
 
     @app.websocket("/api/v1/can/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:

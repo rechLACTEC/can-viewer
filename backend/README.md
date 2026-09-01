@@ -29,6 +29,12 @@ idempotente e não remove interfaces existentes.
 - `PUT /api/v1/can/sessions/{id}/filters`
 - `GET /api/v1/can/sessions/{id}/timing`
 - `POST /api/v1/can/sessions/{id}/frames`
+- `POST /api/v1/can/sessions/{id}/recordings`
+- `POST /api/v1/can/sessions/{id}/recordings/{recording_id}/pause`
+- `POST /api/v1/can/sessions/{id}/recordings/{recording_id}/resume`
+- `POST /api/v1/can/sessions/{id}/recordings/{recording_id}/stop`
+- `GET /api/v1/can/sessions/{id}/recordings/{recording_id}`
+- `GET /api/v1/can/recordings/{recording_id}/download`
 - `WS /api/v1/can/sessions/{id}/stream`
 
 Somente uma sessão CAN ativa é suportada no MVP. O WebSocket envia primeiro um
@@ -82,12 +88,36 @@ limit. `bus.send()` confirma submissão ao driver, não recepção por outro nó
 - `CAN_MONITOR_CLIENT_QUEUE_SIZE=2048`
 - `CAN_MONITOR_WS_BATCH_SIZE=200`
 - `CAN_MONITOR_WS_BATCH_INTERVAL_MS=20`
+- `CAN_MONITOR_RECORDING_DIRECTORY=/data/recordings`
+- `CAN_MONITOR_RECORDING_QUEUE_SIZE=8192`
+- `CAN_MONITOR_RECORDING_MAX_BYTES=268435456`
 - `CAN_MONITOR_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080`
 - `CAN_MONITOR_LOG_LEVEL=INFO`
 
 Filas e buffers são limitados. Em sobrecarga, frames antigos são descartados para
 preservar frescor e os contadores `adapter_dropped_frames` e
 `stream_dropped_frames` tornam a perda do pipeline observável.
+
+## Gravação TRC
+
+A gravação usa uma fila limitada e um worker dedicado, portanto escrita em disco não
+bloqueia o caminho de aquisição. O arquivo permanece com extensão `.trc.part` até a
+fila ser drenada, `TRCWriter.stop()` ser executado e a leitura por `TRCReader` ser
+validada. Somente então ele é renomeado para `.trc` e liberado para download.
+
+Este MVP grava CAN clássico STD/EXT e RX/TX. Sessões CAN FD são recusadas no início.
+Frames FD, RTR ou Error eventualmente observados em uma sessão clássica incrementam
+contadores explícitos e degradam a gravação, pois o `TRCWriter` do python-can 4.6.1
+não os serializa. Pausar afeta apenas a gravação; aquisição, estatísticas, ring buffer
+e WebSocket continuam ativos.
+
+Em Docker, monte um volume persistente em `/data/recordings`, por exemplo
+`./recordings:/data/recordings`. O repositório não possui atualmente um Compose
+executável; por isso nenhuma configuração de rede ou capability foi criada ou alterada.
+
+A fonte é o fluxo normalizado da sessão antes do ring buffer e do WebSocket. Os filtros
+configurados são encaminhados ao SocketCAN/python-can e podem impedir que frames cheguem
+ao processo; a gravação não abre um segundo socket para contornar essa limitação.
 
 ## Timestamps e perda
 

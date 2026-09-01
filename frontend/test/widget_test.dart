@@ -112,6 +112,54 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('records, pauses, resumes and completes with download modal', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final api = FakeCanApi();
+    final controller = CanMonitorController(
+      api: api,
+      streamConnector: FakeStreamConnector(),
+    );
+    await controller.loadInterfaces();
+    await controller.connect();
+    controller.togglePause();
+    await tester.pumpWidget(
+      CanMonitorApp(controller: controller, autoLoad: false),
+    );
+
+    await tester.ensureVisible(find.byKey(const Key('start-recording')));
+    await tester.tap(find.byKey(const Key('start-recording')));
+    await tester.pump();
+    expect(api.startRecordingCount, 1);
+    expect(controller.displayPaused, isTrue);
+    expect(find.text('Gravando'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('pause-recording')));
+    await tester.pump();
+    expect(api.pauseRecordingCount, 1);
+    expect(find.text('Gravação pausada'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('resume-recording')));
+    await tester.pump();
+    expect(api.resumeRecordingCount, 1);
+    expect(find.text('Gravando'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('stop-recording')));
+    await tester.pumpAndSettle();
+    expect(api.stopRecordingCount, 1);
+    expect(find.text('Gravação concluída'), findsOneWidget);
+    expect(find.text('Frames gravados: 8'), findsWidgets);
+    expect(find.byKey(const Key('download-recording-dialog')), findsOneWidget);
+
+    await tester.tap(find.text('Fechar'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('download-recording')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('auto scroll freezes only the visual snapshot and resumes live', (
     tester,
   ) async {

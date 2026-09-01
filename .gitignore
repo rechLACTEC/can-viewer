@@ -45,3 +45,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Runtime CAN recordings (mounted into /data/recordings in the backend)
+/recordings/

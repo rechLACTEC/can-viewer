@@ -12,6 +12,8 @@ from can_monitor.config import Settings
         ("websocket_batch_size", 10_001),
         ("websocket_batch_interval_ms", 0),
         ("tx_rate_limit_per_second", 0),
+        ("recording_queue_size", 0),
+        ("recording_max_bytes", 0),
     ],
 )
 def test_settings_reject_unsafe_resource_limits(field: str, value: int) -> None:

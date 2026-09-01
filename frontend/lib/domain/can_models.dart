@@ -4,6 +4,8 @@ enum CanDirection { rx, tx }
 
 enum CanFilterMode { all, filtered }
 
+enum CanRecordingState { idle, recording, paused, finalizing, completed, error }
+
 class CanInterfaceInfo {
   const CanInterfaceInfo({
     required this.name,
@@ -167,6 +169,69 @@ class CanSession {
   final int filterRevision;
 }
 
+class CanRecording {
+  const CanRecording({
+    required this.state,
+    required this.recordingId,
+    required this.sessionId,
+    required this.interfaceName,
+    required this.startedAt,
+    required this.recordedFrames,
+    required this.unsupportedFrames,
+    required this.unsupportedCanFd,
+    required this.unsupportedRemoteFrames,
+    required this.unsupportedErrorFrames,
+    required this.droppedFrames,
+    required this.sizeBytes,
+    required this.degraded,
+    required this.filename,
+    this.completedAt,
+    this.error,
+  });
+
+  factory CanRecording.fromJson(Map<String, Object?> json) => CanRecording(
+    state: CanRecordingState.values.byName(_requiredString(json, 'state')),
+    recordingId: _requiredString(json, 'recording_id'),
+    sessionId: _requiredString(json, 'session_id'),
+    interfaceName: _requiredString(json, 'interface'),
+    startedAt: DateTime.parse(_requiredString(json, 'started_at')),
+    completedAt: _optionalDateTime(json['completed_at']),
+    recordedFrames: _requiredInt(json, 'recorded_frames'),
+    unsupportedFrames: _requiredInt(json, 'unsupported_frames'),
+    unsupportedCanFd: _requiredInt(json, 'unsupported_can_fd'),
+    unsupportedRemoteFrames: _requiredInt(json, 'unsupported_remote_frames'),
+    unsupportedErrorFrames: _requiredInt(json, 'unsupported_error_frames'),
+    droppedFrames: _requiredInt(json, 'dropped_frames'),
+    sizeBytes: _requiredInt(json, 'size_bytes'),
+    degraded: json['degraded'] as bool? ?? false,
+    filename: _requiredString(json, 'filename'),
+    error: json['error'] as String?,
+  );
+
+  final CanRecordingState state;
+  final String recordingId;
+  final String sessionId;
+  final String interfaceName;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final int recordedFrames;
+  final int unsupportedFrames;
+  final int unsupportedCanFd;
+  final int unsupportedRemoteFrames;
+  final int unsupportedErrorFrames;
+  final int droppedFrames;
+  final int sizeBytes;
+  final bool degraded;
+  final String filename;
+  final String? error;
+
+  bool get isActive => const {
+    CanRecordingState.recording,
+    CanRecordingState.paused,
+    CanRecordingState.finalizing,
+  }.contains(state);
+}
+
 class CanFrameBatch {
   const CanFrameBatch({
     required this.version,
@@ -291,3 +356,8 @@ BigInt _requiredBigInt(Map<String, Object?> json, String key) {
     _ => throw FormatException('$key ausente ou inválido.'),
   };
 }
+
+DateTime? _optionalDateTime(Object? value) => switch (value) {
+  String raw => DateTime.parse(raw),
+  _ => null,
+};

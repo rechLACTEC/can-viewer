@@ -38,6 +38,12 @@ abstract interface class CanApi {
     required String dataHex,
     String? authorizationToken,
   });
+  Future<CanRecording> startRecording(String sessionId);
+  Future<CanRecording> getRecording(String sessionId, String recordingId);
+  Future<CanRecording> pauseRecording(String sessionId, String recordingId);
+  Future<CanRecording> resumeRecording(String sessionId, String recordingId);
+  Future<CanRecording> stopRecording(String sessionId, String recordingId);
+  Uri recordingDownloadUri(String recordingId);
   void close();
 }
 
@@ -142,6 +148,56 @@ class HttpCanApi implements CanApi {
     final json = _decode(response, allowEmpty: true);
     final frame = json['frame'];
     return frame is Map<String, Object?> ? CanFrame.fromJson(frame) : null;
+  }
+
+  @override
+  Future<CanRecording> startRecording(String sessionId) => _recordingRequest(
+    '/api/v1/can/sessions/$sessionId/recordings',
+    method: 'POST',
+  );
+
+  @override
+  Future<CanRecording> getRecording(String sessionId, String recordingId) =>
+      _recordingRequest(
+        '/api/v1/can/sessions/$sessionId/recordings/$recordingId',
+      );
+
+  @override
+  Future<CanRecording> pauseRecording(String sessionId, String recordingId) =>
+      _recordingRequest(
+        '/api/v1/can/sessions/$sessionId/recordings/$recordingId/pause',
+        method: 'POST',
+      );
+
+  @override
+  Future<CanRecording> resumeRecording(String sessionId, String recordingId) =>
+      _recordingRequest(
+        '/api/v1/can/sessions/$sessionId/recordings/$recordingId/resume',
+        method: 'POST',
+      );
+
+  @override
+  Future<CanRecording> stopRecording(String sessionId, String recordingId) =>
+      _recordingRequest(
+        '/api/v1/can/sessions/$sessionId/recordings/$recordingId/stop',
+        method: 'POST',
+      );
+
+  @override
+  Uri recordingDownloadUri(String recordingId) =>
+      _config.resolve('/api/v1/can/recordings/$recordingId/download');
+
+  Future<CanRecording> _recordingRequest(
+    String path, {
+    String method = 'GET',
+  }) async {
+    final uri = _config.resolve(path);
+    final response =
+        await (method == 'POST'
+                ? _client.post(uri, headers: _jsonHeaders)
+                : _client.get(uri, headers: _jsonHeaders))
+            .timeout(const Duration(seconds: 15));
+    return CanRecording.fromJson(_decode(response));
   }
 
   @override

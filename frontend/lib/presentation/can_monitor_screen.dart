@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../application/can_monitor_controller.dart';
 import '../domain/can_models.dart';
+import '../platform/browser_download.dart';
 import 'transmission_screen.dart';
 
 class CanMonitorScreen extends StatelessWidget {
@@ -94,7 +95,13 @@ class CanMonitorScreen extends StatelessWidget {
                             SizedBox(
                               width: 340,
                               child: SingleChildScrollView(
-                                child: ConnectionPanel(controller: controller),
+                                child: Column(
+                                  children: [
+                                    ConnectionPanel(controller: controller),
+                                    const SizedBox(height: 16),
+                                    RecordingPanel(controller: controller),
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(width: 16),
@@ -109,6 +116,8 @@ class CanMonitorScreen extends StatelessWidget {
                       padding: const EdgeInsets.all(12),
                       children: [
                         ConnectionPanel(controller: controller),
+                        const SizedBox(height: 12),
+                        RecordingPanel(controller: controller),
                         const SizedBox(height: 12),
                         SizedBox(
                           height: 650,
@@ -390,6 +399,288 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
       ),
     );
   }
+}
+
+class RecordingPanel extends StatelessWidget {
+  const RecordingPanel({super.key, required this.controller});
+
+  final CanMonitorController controller;
+
+  Future<void> _stop(BuildContext context) async {
+    final recording = await controller.stopRecording();
+    if (!context.mounted || recording == null) return;
+    if (recording.state == CanRecordingState.completed) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Gravação concluída'),
+          content: _RecordingSummary(recording: recording),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Fechar'),
+            ),
+            FilledButton.icon(
+              key: const Key('download-recording-dialog'),
+              onPressed: () => _download(dialogContext, recording),
+              icon: const Icon(Icons.download),
+              label: const Text('Salvar .TRC'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  void _download(BuildContext context, CanRecording recording) {
+    try {
+      downloadFile(
+        controller.recordingDownloadUri(recording),
+        recording.filename,
+      );
+    } on UnsupportedError catch (error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message?.toString() ?? '$error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final recording = controller.recording;
+    final active = recording?.isActive ?? false;
+    final canStart =
+        controller.isConnected &&
+        !controller.activeSessionFd &&
+        !active &&
+        !controller.recordingAction;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.fiber_manual_record, color: Colors.red),
+                const SizedBox(width: 8),
+                Text(
+                  'Gravação TRC',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (recording == null)
+              const Text('Nenhuma gravação iniciada.')
+            else ...[
+              _RecordingStatus(recording: recording),
+              const SizedBox(height: 10),
+              _RecordingCounters(recording: recording),
+              if (recording.error case final error?) ...[
+                const SizedBox(height: 8),
+                Text(
+                  error,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+            if (controller.activeSessionFd) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'Gravação TRC indisponível em sessões CAN FD neste MVP.',
+              ),
+            ],
+            const SizedBox(height: 14),
+            if (recording?.state == CanRecordingState.recording)
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('pause-recording'),
+                      onPressed: controller.recordingAction
+                          ? null
+                          : controller.pauseRecording,
+                      icon: const Icon(Icons.pause),
+                      label: const Text('Pausar'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _StopRecordingButton(
+                      onPressed: () => _stop(context),
+                      busy: controller.recordingAction,
+                    ),
+                  ),
+                ],
+              )
+            else if (recording?.state == CanRecordingState.paused)
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      key: const Key('resume-recording'),
+                      onPressed: controller.recordingAction
+                          ? null
+                          : controller.resumeRecording,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Retomar'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _StopRecordingButton(
+                      onPressed: () => _stop(context),
+                      busy: controller.recordingAction,
+                    ),
+                  ),
+                ],
+              )
+            else if (recording?.state == CanRecordingState.finalizing)
+              const LinearProgressIndicator()
+            else ...[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  key: const Key('start-recording'),
+                  onPressed: canStart ? controller.startRecording : null,
+                  icon: controller.recordingAction
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fiber_manual_record),
+                  label: Text(
+                    recording == null
+                        ? 'Iniciar gravação'
+                        : 'Iniciar nova gravação',
+                  ),
+                ),
+              ),
+              if (recording?.state == CanRecordingState.completed) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const Key('download-recording'),
+                    onPressed: () => _download(context, recording!),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Salvar .TRC'),
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StopRecordingButton extends StatelessWidget {
+  const _StopRecordingButton({required this.onPressed, required this.busy});
+
+  final VoidCallback onPressed;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    key: const Key('stop-recording'),
+    onPressed: busy ? null : onPressed,
+    icon: const Icon(Icons.stop),
+    label: const Text('Encerrar'),
+  );
+}
+
+class _RecordingStatus extends StatelessWidget {
+  const _RecordingStatus({required this.recording});
+
+  final CanRecording recording;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, icon, color) = switch (recording.state) {
+      CanRecordingState.idle => ('Inativa', Icons.circle_outlined, Colors.grey),
+      CanRecordingState.recording => (
+        'Gravando',
+        Icons.fiber_manual_record,
+        Colors.red,
+      ),
+      CanRecordingState.paused => (
+        'Gravação pausada',
+        Icons.pause_circle,
+        Colors.amber,
+      ),
+      CanRecordingState.finalizing => ('Finalizando', Icons.sync, Colors.amber),
+      CanRecordingState.completed => (
+        'Concluída',
+        Icons.check_circle,
+        Colors.green,
+      ),
+      CanRecordingState.error => (
+        'Erro',
+        Icons.error,
+        Theme.of(context).colorScheme.error,
+      ),
+    };
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+}
+
+class _RecordingCounters extends StatelessWidget {
+  const _RecordingCounters({required this.recording});
+
+  final CanRecording recording;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('Frames gravados: ${recording.recordedFrames}'),
+      Text('Não suportados: ${recording.unsupportedFrames}'),
+      Text('Descartados: ${recording.droppedFrames}'),
+      Text('Tamanho: ${_fileSize(recording.sizeBytes)}'),
+      if (recording.degraded)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '⚠ Gravação degradada · FD ${recording.unsupportedCanFd} · '
+            'RTR ${recording.unsupportedRemoteFrames} · '
+            'Erro ${recording.unsupportedErrorFrames}',
+            style: TextStyle(color: Colors.amber.shade300),
+          ),
+        ),
+    ],
+  );
+}
+
+class _RecordingSummary extends StatelessWidget {
+  const _RecordingSummary({required this.recording});
+
+  final CanRecording recording;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SelectableText('Arquivo: ${recording.filename}'),
+      const SizedBox(height: 12),
+      _RecordingCounters(recording: recording),
+    ],
+  );
+}
+
+String _fileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 class MonitorPanel extends StatefulWidget {

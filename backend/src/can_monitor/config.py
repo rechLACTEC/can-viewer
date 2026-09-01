@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit
 
 
@@ -25,6 +26,9 @@ class Settings:
     client_queue_size: int = 2048
     websocket_batch_size: int = 200
     websocket_batch_interval_ms: int = 20
+    recording_directory: Path = Path("/data/recordings")
+    recording_queue_size: int = 8192
+    recording_max_bytes: int = 256 * 1024 * 1024
     cors_origins: tuple[str, ...] = (
         "http://localhost:3000",
         "http://localhost:5173",
@@ -43,6 +47,11 @@ class Settings:
                 60_000,
             ),
             "tx_rate_limit_per_second": (self.tx_rate_limit_per_second, 10_000),
+            "recording_queue_size": (self.recording_queue_size, 1_000_000),
+            "recording_max_bytes": (
+                self.recording_max_bytes,
+                1024 * 1024 * 1024 * 1024,
+            ),
         }
         for name, (value, maximum) in limits.items():
             if not 1 <= value <= maximum:
@@ -76,6 +85,15 @@ class Settings:
             websocket_batch_size=int(os.getenv("CAN_MONITOR_WS_BATCH_SIZE", "200")),
             websocket_batch_interval_ms=int(
                 os.getenv("CAN_MONITOR_WS_BATCH_INTERVAL_MS", "20")
+            ),
+            recording_directory=Path(
+                os.getenv("CAN_MONITOR_RECORDING_DIRECTORY", "/data/recordings")
+            ),
+            recording_queue_size=int(
+                os.getenv("CAN_MONITOR_RECORDING_QUEUE_SIZE", "8192")
+            ),
+            recording_max_bytes=int(
+                os.getenv("CAN_MONITOR_RECORDING_MAX_BYTES", str(256 * 1024 * 1024))
             ),
             cors_origins=tuple(
                 origin.strip()

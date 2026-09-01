@@ -53,3 +53,9 @@ class CanAdapterError(CanMonitorError):
     status_code = 503
     code = "can_adapter_error"
     title = "CAN interface unavailable"
+
+
+class RecordingStorageError(CanMonitorError):
+    status_code = 507
+    code = "recording_storage_error"
+    title = "CAN recording storage unavailable"

@@ -37,9 +37,11 @@ class CanMonitorController extends ChangeNotifier {
   StreamSubscription<CanFrameBatch>? _streamSubscription;
   CanStreamConnection? _streamConnection;
   Timer? _reconnectTimer;
+  Timer? _recordingPollTimer;
   CanSession? _session;
   bool _dirtyFrames = false;
   bool _closingStream = false;
+  bool _recordingPolling = false;
   int _reconnectAttempt = 0;
   final Set<String> _deletedSessions = {};
   int? _lastSequence;
@@ -59,6 +61,8 @@ class CanMonitorController extends ChangeNotifier {
   bool loadingInterfaces = false;
   bool displayPaused = false;
   bool sending = false;
+  bool recordingAction = false;
+  CanRecording? recording;
   int receivedCount = 0;
   int framesWhilePaused = 0;
   int overwrittenFrames = 0;
@@ -361,16 +365,135 @@ class CanMonitorController extends ChangeNotifier {
     }
   }
 
+  Future<void> startRecording() async {
+    final session = _session;
+    if (session == null || recordingAction) return;
+    recordingAction = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      recording = await _api.startRecording(session.id);
+      _startRecordingPolling();
+    } catch (error) {
+      lastError = _message(error);
+    } finally {
+      recordingAction = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> pauseRecording() async {
+    final current = recording;
+    if (current == null || recordingAction) return;
+    await _performRecordingAction(
+      () => _api.pauseRecording(current.sessionId, current.recordingId),
+    );
+  }
+
+  Future<void> resumeRecording() async {
+    final current = recording;
+    if (current == null || recordingAction) return;
+    await _performRecordingAction(
+      () => _api.resumeRecording(current.sessionId, current.recordingId),
+    );
+  }
+
+  Future<CanRecording?> stopRecording() async {
+    final current = recording;
+    if (current == null || recordingAction) return null;
+    recordingAction = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      recording = await _api.stopRecording(
+        current.sessionId,
+        current.recordingId,
+      );
+      _recordingPollTimer?.cancel();
+      _recordingPollTimer = null;
+      return recording;
+    } catch (error) {
+      lastError = _message(error);
+      return null;
+    } finally {
+      recordingAction = false;
+      notifyListeners();
+    }
+  }
+
+  Uri recordingDownloadUri(CanRecording value) =>
+      _api.recordingDownloadUri(value.recordingId);
+
+  Future<void> _performRecordingAction(
+    Future<CanRecording> Function() action,
+  ) async {
+    recordingAction = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      recording = await action();
+    } catch (error) {
+      lastError = _message(error);
+    } finally {
+      recordingAction = false;
+      notifyListeners();
+    }
+  }
+
+  void _startRecordingPolling() {
+    _recordingPollTimer?.cancel();
+    _recordingPollTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_refreshRecording()),
+    );
+  }
+
+  Future<void> _refreshRecording() async {
+    final current = recording;
+    if (current == null ||
+        !current.isActive ||
+        _recordingPolling ||
+        recordingAction) {
+      return;
+    }
+    _recordingPolling = true;
+    try {
+      recording = await _api.getRecording(
+        current.sessionId,
+        current.recordingId,
+      );
+      if (recording?.isActive != true) {
+        _recordingPollTimer?.cancel();
+        _recordingPollTimer = null;
+      }
+      notifyListeners();
+    } catch (error) {
+      lastError = _message(error);
+      notifyListeners();
+    } finally {
+      _recordingPolling = false;
+    }
+  }
+
   Future<void> disconnect() async {
     final session = _session;
     _session = null;
     _closingStream = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _recordingPollTimer?.cancel();
+    _recordingPollTimer = null;
     await _closeStreamConnection();
     if (session != null) {
       try {
         await _deleteSessionOnce(session.id);
+        final current = recording;
+        if (current != null && current.isActive) {
+          recording = await _api.getRecording(
+            current.sessionId,
+            current.recordingId,
+          );
+        }
       } catch (error) {
         lastError = _message(error);
       }
@@ -394,6 +517,7 @@ class CanMonitorController extends ChangeNotifier {
     _closingStream = true;
     _refreshTimer.cancel();
     _reconnectTimer?.cancel();
+    _recordingPollTimer?.cancel();
     unawaited(_disposeResources(session));
     super.dispose();
   }

@@ -15,6 +15,11 @@ class FakeCanApi implements CanApi {
   bool closed = false;
   bool failFilterUpdate = false;
   bool? connectedFd;
+  int startRecordingCount = 0;
+  int pauseRecordingCount = 0;
+  int resumeRecordingCount = 0;
+  int stopRecordingCount = 0;
+  CanRecording? recording;
 
   @override
   Future<List<CanInterfaceInfo>> listInterfaces() async => interfaces;
@@ -41,6 +46,60 @@ class FakeCanApi implements CanApi {
   Future<void> disconnect(String sessionId) async {
     disconnectCount += 1;
   }
+
+  @override
+  Future<CanRecording> startRecording(String sessionId) async {
+    startRecordingCount += 1;
+    return recording = testRecording(state: CanRecordingState.recording);
+  }
+
+  @override
+  Future<CanRecording> getRecording(
+    String sessionId,
+    String recordingId,
+  ) async => recording ?? testRecording();
+
+  @override
+  Future<CanRecording> pauseRecording(
+    String sessionId,
+    String recordingId,
+  ) async {
+    pauseRecordingCount += 1;
+    return recording = testRecording(
+      state: CanRecordingState.paused,
+      recordedFrames: 4,
+    );
+  }
+
+  @override
+  Future<CanRecording> resumeRecording(
+    String sessionId,
+    String recordingId,
+  ) async {
+    resumeRecordingCount += 1;
+    return recording = testRecording(
+      state: CanRecordingState.recording,
+      recordedFrames: 4,
+    );
+  }
+
+  @override
+  Future<CanRecording> stopRecording(
+    String sessionId,
+    String recordingId,
+  ) async {
+    stopRecordingCount += 1;
+    return recording = testRecording(
+      state: CanRecordingState.completed,
+      recordedFrames: 8,
+      sizeBytes: 2048,
+    );
+  }
+
+  @override
+  Uri recordingDownloadUri(String recordingId) => Uri.parse(
+    'http://localhost:8000/api/v1/can/recordings/$recordingId/download',
+  );
 
   @override
   Future<CanFrame?> sendFrame(
@@ -124,4 +183,30 @@ CanFrameBatch testBatch(
   frames: frames,
   streamDroppedFrames: streamDropped,
   adapterDroppedFrames: adapterDropped,
+);
+
+CanRecording testRecording({
+  CanRecordingState state = CanRecordingState.recording,
+  int recordedFrames = 0,
+  int unsupportedFrames = 0,
+  int droppedFrames = 0,
+  int sizeBytes = 0,
+}) => CanRecording(
+  state: state,
+  recordingId: 'recording-1',
+  sessionId: 'session-1',
+  interfaceName: 'vcan0',
+  startedAt: DateTime.utc(2026, 9, 1, 15, 42, 18),
+  completedAt: state == CanRecordingState.completed
+      ? DateTime.utc(2026, 9, 1, 15, 43)
+      : null,
+  recordedFrames: recordedFrames,
+  unsupportedFrames: unsupportedFrames,
+  unsupportedCanFd: 0,
+  unsupportedRemoteFrames: 0,
+  unsupportedErrorFrames: 0,
+  droppedFrames: droppedFrames,
+  sizeBytes: sizeBytes,
+  degraded: unsupportedFrames > 0 || droppedFrames > 0,
+  filename: 'vcan0_2026-09-01_15-42-18_recording-1.trc',
 );

@@ -10,7 +10,9 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
+from can_monitor.application.recording import RecordingService, RecordingState
 from can_monitor.domain.models import (
     CanInterfaceInfo,
     CapturedFrame,
@@ -21,6 +23,7 @@ from can_monitor.domain.models import (
 from can_monitor.domain.timing import TimingAnalyzer
 from can_monitor.errors import (
     ConflictError,
+    InvalidRequestError,
     NotFoundError,
     RateLimitError,
     TransmissionAuthorizationError,
@@ -52,6 +55,9 @@ class CanSession:
         virtual_tx_enabled: bool,
         physical_tx_token: str | None,
         tx_rate_limit_per_second: int,
+        recording_directory: Path = Path("/data/recordings"),
+        recording_queue_size: int = 8192,
+        recording_max_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         self.id = session_id
         self.interface = interface
@@ -76,6 +82,10 @@ class CanSession:
         self._tx_timestamps: deque[float] = deque()
         self._tx_lock = asyncio.Lock()
         self._subscribers_closed = False
+        self._recording_directory = recording_directory
+        self._recording_queue_size = recording_queue_size
+        self._recording_max_bytes = recording_max_bytes
+        self._active_recording: RecordingService | None = None
 
     async def connect(self) -> None:
         self.state = SessionState.CONNECTING
@@ -101,6 +111,8 @@ class CanSession:
                         filter_revision=self.filter_revision,
                         frame=frame,
                     )
+                    if self._active_recording is not None:
+                        self._active_recording.accept(frame)
                     self._analyzer.observe(frame)
                     self._trace.append(captured)
                     for queue in tuple(self._subscribers.values()):
@@ -121,6 +133,7 @@ class CanSession:
             self.error = str(error)
             self.state = SessionState.ERROR
         finally:
+            await self._finalize_active_recording()
             await self._close_adapter()
             self._signal_subscribers_closed()
 
@@ -205,6 +218,7 @@ class CanSession:
             return
         if self.state is not SessionState.ERROR:
             self.state = SessionState.DISCONNECTING
+        await self._finalize_active_recording()
         task = self._task
         self._task = None
         if task is not None and task is not asyncio.current_task():
@@ -214,6 +228,37 @@ class CanSession:
         self._signal_subscribers_closed()
         if self.state is not SessionState.ERROR:
             self.state = SessionState.DISCONNECTED
+
+    def start_recording(self) -> RecordingService:
+        if self.state is not SessionState.CONNECTED:
+            raise ConflictError("TRC recording requires a connected CAN session")
+        if self.fd:
+            raise InvalidRequestError(
+                "TRC recording is not available for CAN FD sessions because "
+                "python-can TRCWriter 4.6.1 does not support CAN FD"
+            )
+        current = self._active_recording
+        if current is not None and current.state in {
+            RecordingState.RECORDING,
+            RecordingState.PAUSED,
+            RecordingState.FINALIZING,
+        }:
+            raise ConflictError("This CAN session already has an active recording")
+        recording = RecordingService(
+            session_id=self.id,
+            interface=self.interface.name,
+            directory=self._recording_directory,
+            queue_size=self._recording_queue_size,
+            max_bytes=self._recording_max_bytes,
+        )
+        recording.start()
+        self._active_recording = recording
+        return recording
+
+    async def _finalize_active_recording(self) -> None:
+        recording = self._active_recording
+        if recording is not None:
+            await recording.finalize_if_active()
 
     async def _close_adapter(self) -> None:
         try:
@@ -282,6 +327,9 @@ class CanSessionManager:
         virtual_tx_enabled: bool,
         physical_tx_token: str | None,
         tx_rate_limit_per_second: int,
+        recording_directory: Path = Path("/data/recordings"),
+        recording_queue_size: int = 8192,
+        recording_max_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         self._adapter_factory = adapter_factory
         self._trace_buffer_size = trace_buffer_size
@@ -290,7 +338,11 @@ class CanSessionManager:
         self._virtual_tx_enabled = virtual_tx_enabled
         self._physical_tx_token = physical_tx_token
         self._tx_rate_limit_per_second = tx_rate_limit_per_second
+        self._recording_directory = recording_directory
+        self._recording_queue_size = recording_queue_size
+        self._recording_max_bytes = recording_max_bytes
         self._session: CanSession | None = None
+        self._recordings: dict[str, RecordingService] = {}
         self._lock = asyncio.Lock()
 
     async def create(
@@ -314,10 +366,49 @@ class CanSessionManager:
                 virtual_tx_enabled=self._virtual_tx_enabled,
                 physical_tx_token=self._physical_tx_token,
                 tx_rate_limit_per_second=self._tx_rate_limit_per_second,
+                recording_directory=self._recording_directory,
+                recording_queue_size=self._recording_queue_size,
+                recording_max_bytes=self._recording_max_bytes,
             )
             await session.connect()
             self._session = session
             return session
+
+    def start_recording(self, session_id: str) -> RecordingService:
+        recording = self.get(session_id).start_recording()
+        self._recordings[recording.recording_id] = recording
+        return recording
+
+    def get_recording(
+        self, recording_id: str, *, session_id: str | None = None
+    ) -> RecordingService:
+        recording = self._recordings.get(recording_id)
+        if recording is None or (
+            session_id is not None and recording.session_id != session_id
+        ):
+            raise NotFoundError(f"CAN recording {recording_id} was not found")
+        return recording
+
+    async def pause_recording(
+        self, session_id: str, recording_id: str
+    ) -> RecordingService:
+        recording = self.get_recording(recording_id, session_id=session_id)
+        await recording.pause()
+        return recording
+
+    def resume_recording(
+        self, session_id: str, recording_id: str
+    ) -> RecordingService:
+        recording = self.get_recording(recording_id, session_id=session_id)
+        recording.resume()
+        return recording
+
+    async def stop_recording(
+        self, session_id: str, recording_id: str
+    ) -> RecordingService:
+        recording = self.get_recording(recording_id, session_id=session_id)
+        await recording.stop()
+        return recording
 
     def get(self, session_id: str) -> CanSession:
         if self._session is None or self._session.id != session_id:
