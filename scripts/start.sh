@@ -8,7 +8,7 @@ backend_dir="$project_dir/backend"
 frontend_dir="$project_dir/frontend"
 
 backend_port="${CAN_VIEWER_BACKEND_PORT:-8000}"
-frontend_port="${CAN_VIEWER_FRONTEND_PORT:-5173}"
+frontend_port="${CAN_VIEWER_FRONTEND_PORT:-9000}"
 recording_dir="${CAN_MONITOR_RECORDING_DIRECTORY:-$project_dir/recordings}"
 flutter_bin="${CAN_VIEWER_FLUTTER_BIN:-}"
 

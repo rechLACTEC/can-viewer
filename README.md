@@ -64,7 +64,7 @@ errado, informe explicitamente o endereço da máquina:
 CAN_VIEWER_LAN_IP=192.168.1.10 ./scripts/start.sh
 ```
 
-As portas padrão são `5173` para a interface e `8000` para a API. Elas podem ser
+As portas padrão são `9000` para a interface e `8000` para a API. Elas podem ser
 alteradas com `CAN_VIEWER_FRONTEND_PORT` e `CAN_VIEWER_BACKEND_PORT`. O firewall do
 host precisa permitir conexões TCP nessas portas para que outros dispositivos acessem.
 Se necessário, selecione uma instalação específica do Flutter com
