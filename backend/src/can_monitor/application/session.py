@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import time
 import uuid
 from collections import deque
@@ -31,7 +30,6 @@ from can_monitor.errors import (
     InvalidRequestError,
     NotFoundError,
     RateLimitError,
-    TransmissionAuthorizationError,
     TransmissionDisabledError,
 )
 from can_monitor.infrastructure.python_can_adapter import CanBusAdapter
@@ -58,7 +56,6 @@ class CanSession:
         client_queue_size: int,
         tx_enabled: bool,
         virtual_tx_enabled: bool,
-        physical_tx_token: str | None,
         tx_rate_limit_per_second: int,
         recording_directory: Path = Path("/data/recordings"),
         recording_queue_size: int = 8192,
@@ -80,9 +77,8 @@ class CanSession:
         self._stream_dropped_frames = 0
         self._task: asyncio.Task[None] | None = None
         self._filter_lock = asyncio.Lock()
-        self._tx_enabled = tx_enabled
+        self._physical_tx_enabled = tx_enabled
         self._virtual_tx_enabled = virtual_tx_enabled
-        self._physical_tx_token = physical_tx_token
         self._tx_rate_limit_per_second = tx_rate_limit_per_second
         self._tx_timestamps: deque[float] = deque()
         self._tx_lock = asyncio.Lock()
@@ -149,26 +145,9 @@ class CanSession:
             self.filters = filters
             self.filter_revision += 1
 
-    async def send(
-        self, command: SendFrameCommand, authorization_token: str | None = None
-    ) -> None:
-        virtual = self.interface.kind == "vcan"
-        if not self._tx_enabled and not (virtual and self._virtual_tx_enabled):
-            raise TransmissionDisabledError(
-                "Transmission on physical CAN interfaces is disabled; set "
-                "CAN_MONITOR_TX_ENABLED=true only in an authorized environment"
-            )
-        if not virtual:
-            expected = self._physical_tx_token
-            if (
-                expected is None
-                or authorization_token is None
-                or not secrets.compare_digest(authorization_token, expected)
-            ):
-                raise TransmissionAuthorizationError(
-                    "A valid physical CAN transmission token is required"
-                )
+    async def send(self, command: SendFrameCommand) -> None:
         async with self._tx_lock:
+            self._ensure_transmission_enabled()
             now = time.monotonic()
             cutoff = now - 1.0
             while self._tx_timestamps and self._tx_timestamps[0] <= cutoff:
@@ -204,6 +183,22 @@ class CanSession:
                 self.interface.name,
                 command.can_id,
             )
+
+    def _ensure_transmission_enabled(self) -> None:
+        if self.interface.kind == "vcan":
+            enabled = self._virtual_tx_enabled
+            detail = "Transmission on virtual CAN interfaces is disabled"
+        else:
+            enabled = self._physical_tx_enabled
+            detail = "Transmission on physical CAN interfaces is disabled"
+        if not enabled:
+            raise TransmissionDisabledError(detail)
+
+    async def set_physical_tx_enabled(self, enabled: bool) -> None:
+        async with self._tx_lock:
+            self._physical_tx_enabled = enabled
+        if not enabled and self.interface.kind != "vcan":
+            await self.stop_all_transmissions()
 
     def subscribe(self) -> Subscription:
         identifier = str(uuid.uuid4())
@@ -270,7 +265,6 @@ class CanSession:
     def configure_transmission(
         self,
         messages: tuple[TransmissionMessage, ...],
-        authorization_token: str | None,
     ) -> TransmissionPlan:
         if self.state is not SessionState.CONNECTED:
             raise ConflictError("Transmission requires a connected CAN session")
@@ -289,7 +283,6 @@ class CanSession:
             interface=self.interface.name,
             messages=messages,
             sender=self.send,
-            authorization_token=authorization_token,
             bitrate=self.interface.bitrate,
         )
         return self._transmission_plan
@@ -300,10 +293,14 @@ class CanSession:
             raise NotFoundError(f"Transmission plan {plan_id} was not found")
         return plan
 
+    async def start_transmission(self, plan_id: str) -> dict[str, object]:
+        async with self._tx_lock:
+            self._ensure_transmission_enabled()
+            return self.get_transmission(plan_id).start()
+
     async def send_transmission_once(
         self,
         messages: tuple[TransmissionMessage, ...],
-        authorization_token: str | None,
     ) -> TransmissionPlan:
         if any(message.is_fd and not self.fd for message in messages):
             raise InvalidRequestError(
@@ -314,7 +311,6 @@ class CanSession:
             interface=self.interface.name,
             messages=messages,
             sender=self.send,
-            authorization_token=authorization_token,
             bitrate=self.interface.bitrate,
         )
         await plan.send_once()
@@ -397,7 +393,6 @@ class CanSessionManager:
         client_queue_size: int,
         tx_enabled: bool,
         virtual_tx_enabled: bool,
-        physical_tx_token: str | None,
         tx_rate_limit_per_second: int,
         recording_directory: Path = Path("/data/recordings"),
         recording_queue_size: int = 8192,
@@ -406,9 +401,8 @@ class CanSessionManager:
         self._adapter_factory = adapter_factory
         self._trace_buffer_size = trace_buffer_size
         self._client_queue_size = client_queue_size
-        self._tx_enabled = tx_enabled
+        self._physical_tx_enabled = tx_enabled
         self._virtual_tx_enabled = virtual_tx_enabled
-        self._physical_tx_token = physical_tx_token
         self._tx_rate_limit_per_second = tx_rate_limit_per_second
         self._recording_directory = recording_directory
         self._recording_queue_size = recording_queue_size
@@ -416,6 +410,18 @@ class CanSessionManager:
         self._session: CanSession | None = None
         self._recordings: dict[str, RecordingService] = {}
         self._lock = asyncio.Lock()
+
+    @property
+    def physical_tx_enabled(self) -> bool:
+        return self._physical_tx_enabled
+
+    async def set_physical_tx_enabled(self, enabled: bool) -> bool:
+        async with self._lock:
+            self._physical_tx_enabled = enabled
+            session = self._session
+            if session is not None:
+                await session.set_physical_tx_enabled(enabled)
+        return self._physical_tx_enabled
 
     async def create(
         self,
@@ -434,9 +440,8 @@ class CanSessionManager:
                 self._adapter_factory(),
                 trace_buffer_size=self._trace_buffer_size,
                 client_queue_size=self._client_queue_size,
-                tx_enabled=self._tx_enabled,
+                tx_enabled=self._physical_tx_enabled,
                 virtual_tx_enabled=self._virtual_tx_enabled,
-                physical_tx_token=self._physical_tx_token,
                 tx_rate_limit_per_second=self._tx_rate_limit_per_second,
                 recording_directory=self._recording_directory,
                 recording_queue_size=self._recording_queue_size,

@@ -117,6 +117,7 @@ def test_validation_conflict_not_found_and_problem_json() -> None:
 def test_physical_tx_disabled_but_vcan_tx_enabled_by_default() -> None:
     physical_app, _ = _make_app(CanInterfaceInfo("can0", "can"))
     with TestClient(physical_app) as client:
+        assert client.get("/api/v1/can/tx-enabled").json() == {"enabled": False}
         session = _create(client, "can0")
         response = client.post(
             f"/api/v1/can/sessions/{session['id']}/frames",
@@ -136,32 +137,29 @@ def test_physical_tx_disabled_but_vcan_tx_enabled_by_default() -> None:
         assert adapters[0].sent[0].data == b"\x01\x0a\xff"
 
 
-def test_physical_tx_requires_token_and_all_tx_is_rate_limited() -> None:
-    token = "a-secure-test-token"
+def test_physical_tx_can_be_enabled_and_disabled_at_runtime() -> None:
     app, adapters = _make_app(
         CanInterfaceInfo("can0", "can"),
-        tx_enabled=True,
-        physical_tx_token=token,
         tx_rate_limit_per_second=2,
     )
     with TestClient(app) as client:
+        assert client.get("/api/v1/can/tx-enabled").json() == {"enabled": False}
         session = _create(client, "can0")
         path = f"/api/v1/can/sessions/{session['id']}/frames"
         body = {"can_id": 0x123, "data_hex": "01"}
         assert client.post(path, json=body).status_code == 403
-        assert (
-            client.post(
-                path, json=body, headers={"X-CAN-TX-Token": "wrong-token-value"}
-            ).status_code
-            == 403
-        )
-        headers = {"X-CAN-TX-Token": token}
-        assert client.post(path, json=body, headers=headers).status_code == 202
-        assert client.post(path, json=body, headers=headers).status_code == 202
-        limited = client.post(path, json=body, headers=headers)
+        enabled = client.put("/api/v1/can/tx-enabled", json={"enabled": True})
+        assert enabled.json() == {"enabled": True}
+        assert client.get("/api/v1/can/tx-enabled").json() == {"enabled": True}
+        assert client.post(path, json=body).status_code == 202
+        assert client.post(path, json=body).status_code == 202
+        limited = client.post(path, json=body)
         assert limited.status_code == 429
         assert limited.json()["code"] == "rate_limit_exceeded"
         assert len(adapters[0].sent) == 2
+        disabled = client.put("/api/v1/can/tx-enabled", json={"enabled": False})
+        assert disabled.json() == {"enabled": False}
+        assert client.post(path, json=body).status_code == 403
 
     virtual_app, _ = _make_app(
         CanInterfaceInfo("vcan0", "vcan"), tx_rate_limit_per_second=1
@@ -204,6 +202,40 @@ def test_websocket_hello_and_frame_batch_contract() -> None:
             assert event["frames"][0]["direction"] == "rx"
 
 
+def test_disabling_physical_tx_keeps_acquisition_and_websocket_active() -> None:
+    app, adapters = _make_app(
+        CanInterfaceInfo("can0", "can"),
+        tx_enabled=True,
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/v1/can/tx-enabled").json() == {"enabled": True}
+        session = _create(client, "can0")
+        path = f"/api/v1/can/sessions/{session['id']}/stream"
+        with client.websocket_connect(path) as websocket:
+            assert websocket.receive_json()["type"] == "hello"
+            assert client.put(
+                "/api/v1/can/tx-enabled", json={"enabled": False}
+            ).json() == {"enabled": False}
+            adapters[0].emit(
+                CanFrame(
+                    capture_timestamp_ns=2_000_000_000,
+                    ingress_monotonic_ns=200,
+                    interface="can0",
+                    can_id=0x321,
+                    is_extended_id=False,
+                    is_fd=False,
+                    dlc=1,
+                    data=b"\xaa",
+                    direction=Direction.RX,
+                )
+            )
+            event = websocket.receive_json()
+            assert event["frames"][0]["data_hex"] == "AA"
+            assert client.get(f"/api/v1/can/sessions/{session['id']}").json()[
+                "state"
+            ] == "connected"
+
+
 def test_websocket_origin_must_match_cors_allowlist() -> None:
     origin = "https://allowed.example"
     app, _ = _make_app(
@@ -221,22 +253,21 @@ def test_websocket_origin_must_match_cors_allowlist() -> None:
             assert websocket.receive_json()["type"] == "hello"
 
 
-def test_cors_preflight_allows_physical_tx_token_header() -> None:
+def test_cors_preflight_allows_json_runtime_tx_control() -> None:
     origin = "https://allowed.example"
     app, _ = _make_app(
         CanInterfaceInfo("can0", "can"), cors_origins=(origin,)
     )
     with TestClient(app) as client:
         response = client.options(
-            "/api/v1/can/sessions/example/frames",
+            "/api/v1/can/tx-enabled",
             headers={
                 "Origin": origin,
-                "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": "content-type,x-can-tx-token",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "content-type",
             },
         )
 
     assert response.status_code == 200
     allowed = response.headers["access-control-allow-headers"].lower()
     assert "content-type" in allowed
-    assert "x-can-tx-token" in allowed

@@ -78,6 +78,10 @@ class SendFrameRequest(StrictModel):
         return self
 
 
+class TxEnabledRequest(StrictModel):
+    enabled: bool
+
+
 class CrcRequest(StrictModel):
     algorithm: str = Field(max_length=64)
     range_start: int = Field(ge=0, le=63)

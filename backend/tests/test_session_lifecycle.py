@@ -38,7 +38,6 @@ def _session(adapter: FakeAdapter) -> CanSession:
         client_queue_size=8,
         tx_enabled=False,
         virtual_tx_enabled=True,
-        physical_tx_token=None,
         tx_rate_limit_per_second=10,
     )
 

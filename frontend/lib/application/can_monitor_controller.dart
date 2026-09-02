@@ -67,6 +67,9 @@ class CanMonitorController extends ChangeNotifier {
   bool recordingAction = false;
   CanRecording? recording;
   bool transmissionAction = false;
+  bool physicalTxEnabled = false;
+  bool physicalTxStateLoading = false;
+  bool physicalTxUpdating = false;
   CanTransmissionStatus? transmissionStatus;
   List<CanTransmissionMessageConfig> transmissionMessages = const [];
   int receivedCount = 0;
@@ -83,6 +86,16 @@ class CanMonitorController extends ChangeNotifier {
       connectionState == MonitorConnectionState.degraded;
   bool get activeSessionFd => _session?.isFd ?? false;
   String? get activeInterfaceName => _session?.interfaceName;
+  bool get activeInterfaceIsVirtual {
+    final session = _session;
+    if (session != null && session.interfaceType != 'unknown') {
+      return session.interfaceType == 'vcan';
+    }
+    return selectedInterface?.type == 'vcan';
+  }
+
+  bool get transmissionEnabledForActiveInterface =>
+      activeInterfaceIsVirtual || physicalTxEnabled;
   bool get streamDegraded =>
       sequenceGapFrames > 0 ||
       duplicateOrReorderedFrames > 0 ||
@@ -342,7 +355,6 @@ class CanMonitorController extends ChangeNotifier {
     required bool isExtended,
     required bool isFd,
     required String dataHex,
-    String? authorizationToken,
   }) async {
     final session = _session;
     if (session == null || sending) return;
@@ -361,7 +373,6 @@ class CanMonitorController extends ChangeNotifier {
         isExtended: isExtended,
         isFd: isFd,
         dataHex: dataHex,
-        authorizationToken: authorizationToken,
       );
     } catch (error) {
       lastError = _message(error);
@@ -485,7 +496,51 @@ class CanMonitorController extends ChangeNotifier {
     }
   }
 
-  Future<CanTransmissionStatus?> configureTransmission(String? token) async {
+  Future<void> loadPhysicalTxEnabled() async {
+    if (physicalTxStateLoading || physicalTxUpdating) return;
+    physicalTxStateLoading = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      physicalTxEnabled = await _api.getPhysicalTxEnabled();
+    } catch (error) {
+      lastError = _message(error);
+    } finally {
+      physicalTxStateLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setPhysicalTxEnabled(bool enabled) async {
+    if (physicalTxUpdating || enabled == physicalTxEnabled) return;
+    physicalTxUpdating = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      final confirmed = await _api.setPhysicalTxEnabled(enabled);
+      physicalTxEnabled = confirmed;
+      if (!confirmed) {
+        final status = transmissionStatus;
+        if (status != null &&
+            status.state != CanTransmissionState.stopped &&
+            !activeInterfaceIsVirtual) {
+          transmissionStatus = await _api.getTransmission(
+            status.sessionId,
+            status.planId,
+          );
+        }
+        _transmissionPollTimer?.cancel();
+        _transmissionPollTimer = null;
+      }
+    } catch (error) {
+      lastError = _message(error);
+    } finally {
+      physicalTxUpdating = false;
+      notifyListeners();
+    }
+  }
+
+  Future<CanTransmissionStatus?> configureTransmission() async {
     final session = _session;
     if (session == null || transmissionAction || transmissionMessages.isEmpty) {
       return null;
@@ -494,7 +549,6 @@ class CanMonitorController extends ChangeNotifier {
       transmissionStatus = await _api.configureTransmission(
         session.id,
         transmissionMessages,
-        authorizationToken: token,
       );
       return transmissionStatus;
     });
@@ -513,14 +567,13 @@ class CanMonitorController extends ChangeNotifier {
     });
   }
 
-  Future<void> sendTransmissionOnce(String? token) async {
+  Future<void> sendTransmissionOnce() async {
     final session = _session;
     if (session == null || transmissionMessages.isEmpty) return;
     await _runTransmissionAction(() async {
       transmissionStatus = await _api.sendTransmissionOnce(
         session.id,
         transmissionMessages,
-        authorizationToken: token,
       );
       return transmissionStatus;
     });

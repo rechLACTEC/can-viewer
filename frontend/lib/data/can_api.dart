@@ -30,13 +30,14 @@ abstract interface class CanApi {
     required List<CanFilterId> ids,
   });
   Future<void> disconnect(String sessionId);
+  Future<bool> getPhysicalTxEnabled();
+  Future<bool> setPhysicalTxEnabled(bool enabled);
   Future<CanFrame?> sendFrame(
     String sessionId, {
     required int canId,
     required bool isExtended,
     required bool isFd,
     required String dataHex,
-    String? authorizationToken,
   });
   Future<CanRecording> startRecording(String sessionId);
   Future<CanRecording> getRecording(String sessionId, String recordingId);
@@ -50,14 +51,12 @@ abstract interface class CanApi {
   );
   Future<CanTransmissionStatus> configureTransmission(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  });
+    List<CanTransmissionMessageConfig> messages,
+  );
   Future<CanTransmissionStatus> sendTransmissionOnce(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  });
+    List<CanTransmissionMessageConfig> messages,
+  );
   Future<CanTransmissionStatus> startTransmission(
     String sessionId,
     String planId,
@@ -156,22 +155,42 @@ class HttpCanApi implements CanApi {
   }
 
   @override
+  Future<bool> getPhysicalTxEnabled() => _physicalTxRequest();
+
+  @override
+  Future<bool> setPhysicalTxEnabled(bool enabled) =>
+      _physicalTxRequest(enabled: enabled);
+
+  Future<bool> _physicalTxRequest({bool? enabled}) async {
+    final uri = _config.resolve('/api/v1/can/tx-enabled');
+    final response =
+        await (enabled == null
+                ? _client.get(uri, headers: _jsonHeaders)
+                : _client.put(
+                    uri,
+                    headers: _jsonHeaders,
+                    body: jsonEncode({'enabled': enabled}),
+                  ))
+            .timeout(const Duration(seconds: 8));
+    final value = _decode(response)['enabled'];
+    if (value is! bool) {
+      throw const FormatException('Estado de transmissão física inválido.');
+    }
+    return value;
+  }
+
+  @override
   Future<CanFrame?> sendFrame(
     String sessionId, {
     required int canId,
     required bool isExtended,
     required bool isFd,
     required String dataHex,
-    String? authorizationToken,
   }) async {
     final response = await _client
         .post(
           _config.resolve('/api/v1/can/sessions/$sessionId/frames'),
-          headers: {
-            ..._jsonHeaders,
-            if (authorizationToken != null && authorizationToken.isNotEmpty)
-              'X-CAN-TX-Token': authorizationToken,
-          },
+          headers: _jsonHeaders,
           body: jsonEncode({
             'can_id': canId,
             'is_extended_id': isExtended,
@@ -242,23 +261,19 @@ class HttpCanApi implements CanApi {
   @override
   Future<CanTransmissionStatus> configureTransmission(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  }) => _transmissionRequest(
+    List<CanTransmissionMessageConfig> messages,
+  ) => _transmissionRequest(
     '/api/v1/can/sessions/$sessionId/transmissions',
     body: {'messages': messages.map((item) => item.toJson()).toList()},
-    authorizationToken: authorizationToken,
   );
 
   @override
   Future<CanTransmissionStatus> sendTransmissionOnce(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  }) => _transmissionRequest(
+    List<CanTransmissionMessageConfig> messages,
+  ) => _transmissionRequest(
     '/api/v1/can/sessions/$sessionId/transmissions/send-once',
     body: {'messages': messages.map((item) => item.toJson()).toList()},
-    authorizationToken: authorizationToken,
   );
 
   @override
@@ -319,14 +334,9 @@ class HttpCanApi implements CanApi {
     String path, {
     String method = 'POST',
     Map<String, Object?>? body,
-    String? authorizationToken,
   }) async {
     final uri = _config.resolve(path);
-    final headers = {
-      ..._jsonHeaders,
-      if (authorizationToken != null && authorizationToken.isNotEmpty)
-        'X-CAN-TX-Token': authorizationToken,
-    };
+    final headers = _jsonHeaders;
     final response =
         await (method == 'GET'
                 ? _client.get(uri, headers: headers)

@@ -148,6 +148,7 @@ class CanSession {
     required this.interfaceName,
     required this.isFd,
     required this.filterRevision,
+    this.interfaceType = 'unknown',
   });
 
   factory CanSession.fromJson(Map<String, Object?> json) {
@@ -162,6 +163,10 @@ class CanSession {
           ? source['id']! as String
           : _requiredString(source, 'session_id'),
       interfaceName: interfaceName,
+      interfaceType:
+          source['interface_kind'] as String? ??
+          source['interface_type'] as String? ??
+          'unknown',
       isFd: source['fd'] as bool? ?? false,
       filterRevision: (source['filter_revision'] as num?)?.toInt() ?? 1,
     );
@@ -169,6 +174,7 @@ class CanSession {
 
   final String id;
   final String interfaceName;
+  final String interfaceType;
   final bool isFd;
   final int filterRevision;
 }

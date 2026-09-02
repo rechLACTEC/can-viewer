@@ -23,6 +23,8 @@ idempotente e não remove interfaces existentes.
 
 - `GET /api/v1/health`
 - `GET /api/v1/can/interfaces`
+- `GET /api/v1/can/tx-enabled`
+- `PUT /api/v1/can/tx-enabled`
 - `POST /api/v1/can/sessions`
 - `GET /api/v1/can/sessions/{id}`
 - `DELETE /api/v1/can/sessions/{id}`
@@ -70,22 +72,21 @@ habilitado para desenvolvimento. Para habilitar uma interface física em ambient
 expressamente autorizado:
 
 ```bash
-CAN_MONITOR_TX_ENABLED=true \
-CAN_MONITOR_PHYSICAL_TX_TOKEN='troque-por-um-segredo-longo' \
-uv run uvicorn can_monitor.main:app
+CAN_MONITOR_TX_ENABLED=true uv run uvicorn can_monitor.main:app
 ```
 
-O cliente deve enviar esse segredo no header `X-CAN-TX-Token` em cada POST de TX
-físico. O segredo é obrigatório e deve ter ao menos 16 caracteres quando TX físico
-está habilitado. `vcan` não exige token, mas todas as interfaces respeitam o rate
-limit. `bus.send()` confirma submissão ao driver, não recepção por outro nó. O eco local
-é transmitido no stream como direção `tx` quando suportado.
+Esse valor define apenas o estado inicial. Durante a execução, `GET` e `PUT`
+`/api/v1/can/tx-enabled` consultam e alteram o controle de transmissão física.
+Ao desabilitar, o backend bloqueia novos envios e encerra o plano cíclico físico
+ativo sem afetar aquisição, WebSocket ou gravação. `vcan` é controlado
+separadamente, mas todas as interfaces respeitam o rate limit. `bus.send()` confirma
+submissão ao driver, não recepção por outro nó. O eco local é transmitido no stream
+como direção `tx` quando suportado.
 
 ## Configuração
 
 - `CAN_MONITOR_TX_ENABLED=false`
 - `CAN_MONITOR_VIRTUAL_TX_ENABLED=true`
-- `CAN_MONITOR_PHYSICAL_TX_TOKEN` (obrigatório quando TX físico está habilitado)
 - `CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND=10`
 - `CAN_MONITOR_ACQUISITION_QUEUE_SIZE=8192`
 - `CAN_MONITOR_TRACE_BUFFER_SIZE=10000`

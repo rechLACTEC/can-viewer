@@ -72,7 +72,7 @@ class MessageTelemetry:
     state: str = "stopped"
 
 
-Sender = Callable[[SendFrameCommand, str | None], Awaitable[None]]
+Sender = Callable[[SendFrameCommand], Awaitable[None]]
 
 
 class TransmissionPlan:
@@ -83,7 +83,6 @@ class TransmissionPlan:
         interface: str,
         messages: tuple[TransmissionMessage, ...],
         sender: Sender,
-        authorization_token: str | None,
         bitrate: int | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -97,7 +96,6 @@ class TransmissionPlan:
         self.messages = messages
         self.state = TransmissionPlanState.STOPPED
         self._sender = sender
-        self._authorization_token = authorization_token
         self._bitrate = bitrate
         self._monotonic = monotonic
         self._wake = asyncio.Event()
@@ -264,7 +262,7 @@ class TransmissionPlan:
                 return
             try:
                 command, crc_value = message.command()
-                await self._sender(command, self._authorization_token)
+                await self._sender(command)
                 telemetry.sent_frames += 1
                 telemetry.last_transmission = datetime.now(timezone.utc)
                 telemetry.last_error = None

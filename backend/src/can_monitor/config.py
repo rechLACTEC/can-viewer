@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -19,7 +19,6 @@ def _bool_env(name: str, default: bool) -> bool:
 class Settings:
     tx_enabled: bool = False
     virtual_tx_enabled: bool = True
-    physical_tx_token: str | None = field(default=None, repr=False)
     tx_rate_limit_per_second: int = 10
     acquisition_queue_size: int = 8192
     trace_buffer_size: int = 10_000
@@ -56,13 +55,6 @@ class Settings:
         for name, (value, maximum) in limits.items():
             if not 1 <= value <= maximum:
                 raise ValueError(f"{name} must be between 1 and {maximum}")
-        if self.tx_enabled and (
-            self.physical_tx_token is None or len(self.physical_tx_token) < 16
-        ):
-            raise ValueError(
-                "CAN_MONITOR_PHYSICAL_TX_TOKEN must contain at least 16 characters "
-                "when physical transmission is enabled"
-            )
         for origin in self.cors_origins:
             parsed = urlsplit(origin)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -73,7 +65,6 @@ class Settings:
         return cls(
             tx_enabled=_bool_env("CAN_MONITOR_TX_ENABLED", False),
             virtual_tx_enabled=_bool_env("CAN_MONITOR_VIRTUAL_TX_ENABLED", True),
-            physical_tx_token=os.getenv("CAN_MONITOR_PHYSICAL_TX_TOKEN") or None,
             tx_rate_limit_per_second=int(
                 os.getenv("CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND", "10")
             ),

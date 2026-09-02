@@ -58,6 +58,8 @@ void main() {
     expect(find.text('Transmissão CAN'), findsWidgets);
     expect(find.text('Nenhuma mensagem configurada.'), findsOneWidget);
     expect(find.textContaining('equipamentos reais'), findsOneWidget);
+    expect(find.byKey(const Key('physical-tx-toggle')), findsOneWidget);
+    expect(api.getPhysicalTxEnabledCount, 1);
     await tester.tap(find.byKey(const Key('add-transmission-message')));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
@@ -91,6 +93,67 @@ void main() {
     expect(find.text('CAN Monitor'), findsOneWidget);
     expect(find.byKey(const Key('tx-id-input')), findsNothing);
     expect(controller.isConnected, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('physical TX toggle confirms and reflects backend state', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final api = FakeCanApi(
+      interfaces: const [
+        CanInterfaceInfo(name: 'can0', state: 'up', type: 'can'),
+      ],
+    );
+    final controller = CanMonitorController(
+      api: api,
+      streamConnector: FakeStreamConnector(),
+    );
+    await controller.loadInterfaces();
+    await controller.connect();
+    await tester.pumpWidget(
+      CanMonitorApp(controller: controller, autoLoad: false),
+    );
+    await tester.tap(find.byKey(const Key('open-transmission')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('physical-tx-toggle')))
+          .value,
+      isFalse,
+    );
+    await tester.tap(find.byKey(const Key('physical-tx-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Habilitar transmissão física?'), findsOneWidget);
+    expect(api.setPhysicalTxEnabledCount, 0);
+
+    await tester.tap(find.byKey(const Key('confirm-enable-physical-tx')));
+    await tester.pumpAndSettle();
+    expect(api.setPhysicalTxEnabledCount, 1);
+    expect(controller.physicalTxEnabled, isTrue);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('physical-tx-toggle')))
+          .value,
+      isTrue,
+    );
+
+    api.failPhysicalTxUpdate = true;
+    await tester.tap(find.byKey(const Key('physical-tx-toggle')));
+    await tester.pumpAndSettle();
+    expect(api.setPhysicalTxEnabledCount, 2);
+    expect(controller.physicalTxEnabled, isTrue);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('physical-tx-toggle')))
+          .value,
+      isTrue,
+    );
+    expect(find.text('Não foi possível alterar TX físico.'), findsOneWidget);
+
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });

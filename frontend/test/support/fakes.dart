@@ -5,9 +5,18 @@ import 'package:can_viewer/data/can_stream.dart';
 import 'package:can_viewer/domain/can_models.dart';
 
 class FakeCanApi implements CanApi {
-  final interfaces = const [
-    CanInterfaceInfo(name: 'vcan0', state: 'up', type: 'vcan'),
-  ];
+  FakeCanApi({
+    this.interfaces = const [
+      CanInterfaceInfo(name: 'vcan0', state: 'up', type: 'vcan'),
+    ],
+    this.physicalTxEnabled = false,
+  });
+
+  final List<CanInterfaceInfo> interfaces;
+  bool physicalTxEnabled;
+  bool failPhysicalTxUpdate = false;
+  int getPhysicalTxEnabledCount = 0;
+  int setPhysicalTxEnabledCount = 0;
   CanFilterMode? lastFilterMode;
   List<CanFilterId> lastFilterIds = const [];
   int sendCount = 0;
@@ -45,6 +54,9 @@ class FakeCanApi implements CanApi {
     return CanSession(
       id: 'session-1',
       interfaceName: interfaceName,
+      interfaceType: interfaces
+          .firstWhere((item) => item.name == interfaceName)
+          .type,
       isFd: isFd,
       filterRevision: 1,
     );
@@ -121,9 +133,8 @@ class FakeCanApi implements CanApi {
   @override
   Future<CanTransmissionStatus> configureTransmission(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  }) async {
+    List<CanTransmissionMessageConfig> messages,
+  ) async {
     configureTransmissionCount += 1;
     return transmissionStatus = testTransmissionStatus(
       messages,
@@ -134,9 +145,8 @@ class FakeCanApi implements CanApi {
   @override
   Future<CanTransmissionStatus> sendTransmissionOnce(
     String sessionId,
-    List<CanTransmissionMessageConfig> messages, {
-    String? authorizationToken,
-  }) async {
+    List<CanTransmissionMessageConfig> messages,
+  ) async {
     sendTransmissionOnceCount += 1;
     return transmissionStatus = testTransmissionStatus(
       messages,
@@ -223,10 +233,28 @@ class FakeCanApi implements CanApi {
     required bool isExtended,
     required bool isFd,
     required String dataHex,
-    String? authorizationToken,
   }) async {
     sendCount += 1;
     return null;
+  }
+
+  @override
+  Future<bool> getPhysicalTxEnabled() async {
+    getPhysicalTxEnabledCount += 1;
+    return physicalTxEnabled;
+  }
+
+  @override
+  Future<bool> setPhysicalTxEnabled(bool enabled) async {
+    setPhysicalTxEnabledCount += 1;
+    if (failPhysicalTxUpdate) {
+      throw const CanApiException('Não foi possível alterar TX físico.');
+    }
+    physicalTxEnabled = enabled;
+    if (!enabled && transmissionStatus != null) {
+      transmissionStatus = _copyTransmissionState(CanTransmissionState.stopped);
+    }
+    return physicalTxEnabled;
   }
 
   @override

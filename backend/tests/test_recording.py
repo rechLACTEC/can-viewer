@@ -319,7 +319,6 @@ def test_pause_only_stops_recording_not_session_acquisition(tmp_path: Path) -> N
             client_queue_size=8,
             tx_enabled=False,
             virtual_tx_enabled=True,
-            physical_tx_token=None,
             tx_rate_limit_per_second=10,
             recording_directory=tmp_path,
         )

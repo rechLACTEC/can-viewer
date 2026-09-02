@@ -156,4 +156,30 @@ void main() {
     expect(api.disconnectCount, 1);
     expect(api.closed, isTrue);
   });
+
+  test(
+    'physical TX state follows backend and is retained on update error',
+    () async {
+      final api = FakeCanApi(physicalTxEnabled: true);
+      final controller = CanMonitorController(
+        api: api,
+        streamConnector: FakeStreamConnector(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPhysicalTxEnabled();
+      expect(controller.physicalTxEnabled, isTrue);
+      expect(api.getPhysicalTxEnabledCount, 1);
+
+      api.failPhysicalTxUpdate = true;
+      await controller.setPhysicalTxEnabled(false);
+      expect(controller.physicalTxEnabled, isTrue);
+      expect(controller.lastError, 'Não foi possível alterar TX físico.');
+
+      api.failPhysicalTxUpdate = false;
+      await controller.setPhysicalTxEnabled(false);
+      expect(controller.physicalTxEnabled, isFalse);
+      expect(api.setPhysicalTxEnabledCount, 2);
+    },
+  );
 }

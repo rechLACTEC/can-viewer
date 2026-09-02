@@ -21,14 +21,14 @@ def test_settings_reject_unsafe_resource_limits(field: str, value: int) -> None:
         Settings(**{field: value})
 
 
-def test_physical_tx_enabled_requires_long_token() -> None:
-    with pytest.raises(ValueError, match="PHYSICAL_TX_TOKEN"):
-        Settings(tx_enabled=True)
-    with pytest.raises(ValueError, match="PHYSICAL_TX_TOKEN"):
-        Settings(tx_enabled=True, physical_tx_token="short")
-    assert Settings(
-        tx_enabled=True, physical_tx_token="a-long-secret-token"
-    ).tx_enabled
+def test_physical_tx_defaults_to_disabled_and_reads_enabled_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAN_MONITOR_TX_ENABLED", raising=False)
+    assert Settings.from_env().tx_enabled is False
+    monkeypatch.setenv("CAN_MONITOR_TX_ENABLED", "true")
+    assert Settings.from_env().tx_enabled is True
+    assert Settings(tx_enabled=True).tx_enabled is True
 
 
 def test_cors_origins_must_be_absolute_http_origins() -> None:

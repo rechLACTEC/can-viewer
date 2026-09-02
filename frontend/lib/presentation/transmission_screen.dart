@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/can_monitor_controller.dart';
@@ -25,7 +27,6 @@ class TransmissionScreen extends StatefulWidget {
 }
 
 class _TransmissionScreenState extends State<TransmissionScreen> {
-  final _tokenController = TextEditingController();
   String? _selectedMessageId;
 
   CanMonitorController get controller => widget.controller;
@@ -36,12 +37,9 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
     if (controller.transmissionMessages.isNotEmpty) {
       _selectedMessageId = controller.transmissionMessages.first.messageId;
     }
-  }
-
-  @override
-  void dispose() {
-    _tokenController.dispose();
-    super.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(controller.loadPhysicalTxEnabled());
+    });
   }
 
   CanTransmissionMessageConfig? get _selectedMessage {
@@ -90,10 +88,6 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
     });
   }
 
-  String? get _token => _tokenController.text.trim().isEmpty
-      ? null
-      : _tokenController.text.trim();
-
   Future<bool> _confirm(String title, Widget content, Key key) async =>
       await showDialog<bool>(
         context: context,
@@ -128,11 +122,11 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
       ),
       const Key('confirm-send-once'),
     );
-    if (accepted) await controller.sendTransmissionOnce(_token);
+    if (accepted) await controller.sendTransmissionOnce();
   }
 
   Future<void> _reviewAndStart() async {
-    final status = await controller.configureTransmission(_token);
+    final status = await controller.configureTransmission();
     if (!mounted || status == null) return;
     final enabled = controller.transmissionMessages
         .where((item) => item.enabled)
@@ -152,6 +146,21 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
       const Key('confirm-transmission-start'),
     );
     if (accepted) await controller.startConfiguredTransmission();
+  }
+
+  Future<void> _setPhysicalTxEnabled(bool enabled) async {
+    if (enabled) {
+      final accepted = await _confirm(
+        'Habilitar transmissão física?',
+        const Text(
+          'Isso permitirá enviar frames em interfaces CAN físicas enquanto '
+          'esta aplicação estiver em execução.',
+        ),
+        const Key('confirm-enable-physical-tx'),
+      );
+      if (!accepted) return;
+    }
+    await controller.setPhysicalTxEnabled(enabled);
   }
 
   String _messageReview(List<CanTransmissionMessageConfig> messages) => messages
@@ -228,10 +237,10 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
                             children: [
                               _HeaderAndControls(
                                 controller: controller,
-                                tokenController: _tokenController,
                                 active: active,
                                 controls: _controls(active),
                                 onAdd: _addMessage,
+                                onPhysicalTxChanged: _setPhysicalTxEnabled,
                               ),
                               const SizedBox(height: 18),
                               LayoutBuilder(
@@ -304,6 +313,7 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
     final state = controller.transmissionStatus?.state;
     final canSubmit =
         controller.isConnected &&
+        controller.transmissionEnabledForActiveInterface &&
         controller.transmissionMessages.any((item) => item.enabled) &&
         !controller.transmissionAction;
     return [
@@ -354,17 +364,17 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
 class _HeaderAndControls extends StatelessWidget {
   const _HeaderAndControls({
     required this.controller,
-    required this.tokenController,
     required this.active,
     required this.controls,
     required this.onAdd,
+    required this.onPhysicalTxChanged,
   });
 
   final CanMonitorController controller;
-  final TextEditingController tokenController;
   final bool active;
   final List<Widget> controls;
   final VoidCallback onAdd;
+  final ValueChanged<bool> onPhysicalTxChanged;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -408,18 +418,26 @@ class _HeaderAndControls extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: TextFormField(
-                  key: const Key('tx-token-input'),
-                  controller: tokenController,
-                  obscureText: true,
-                  enabled: !active,
-                  decoration: const InputDecoration(
-                    labelText: 'Token TX para interface física (opcional)',
-                  ),
+              const Divider(height: 24),
+              SwitchListTile(
+                key: const Key('physical-tx-toggle'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Transmissão física'),
+                subtitle: Text(
+                  controller.physicalTxStateLoading
+                      ? 'Consultando estado do backend...'
+                      : controller.activeInterfaceIsVirtual
+                      ? 'Interface virtual: este controle afeta apenas CAN física.'
+                      : controller.physicalTxEnabled
+                      ? 'Habilitada no backend.'
+                      : 'Desabilitada no backend; os controles de envio estão bloqueados.',
                 ),
+                value: controller.physicalTxEnabled,
+                onChanged:
+                    controller.physicalTxStateLoading ||
+                        controller.physicalTxUpdating
+                    ? null
+                    : onPhysicalTxChanged,
               ),
               if (!controller.isConnected) ...[
                 const SizedBox(height: 10),

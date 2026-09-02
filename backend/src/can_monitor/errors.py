@@ -37,12 +37,6 @@ class TransmissionDisabledError(CanMonitorError):
     title = "CAN transmission disabled"
 
 
-class TransmissionAuthorizationError(CanMonitorError):
-    status_code = 403
-    code = "transmission_authorization_failed"
-    title = "CAN transmission authorization failed"
-
-
 class RateLimitError(CanMonitorError):
     status_code = 429
     code = "rate_limit_exceeded"

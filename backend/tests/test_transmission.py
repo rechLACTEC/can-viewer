@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,7 +45,7 @@ def test_multiple_messages_use_independent_periods_and_disabled_is_skipped() -> 
     async def scenario() -> None:
         sent: list[SendFrameCommand] = []
 
-        async def sender(command: SendFrameCommand, _: str | None) -> None:
+        async def sender(command: SendFrameCommand) -> None:
             sent.append(command)
 
         plan = TransmissionPlan(
@@ -56,7 +57,6 @@ def test_multiple_messages_use_independent_periods_and_disabled_is_skipped() -> 
                 _message("disabled", period_ms=10, enabled=False, payload=b"\x03"),
             ),
             sender=sender,
-            authorization_token=None,
         )
         plan.start()
         await asyncio.sleep(0.13)
@@ -76,7 +76,7 @@ def test_single_messages_send_once_on_start_and_send_once_operation() -> None:
     async def scenario() -> None:
         sent: list[bytes] = []
 
-        async def sender(command: SendFrameCommand, _: str | None) -> None:
+        async def sender(command: SendFrameCommand) -> None:
             sent.append(command.data)
 
         plan = TransmissionPlan(
@@ -92,7 +92,6 @@ def test_single_messages_send_once_on_start_and_send_once_operation() -> None:
                 ),
             ),
             sender=sender,
-            authorization_token=None,
         )
         plan.start()
         await asyncio.sleep(0.01)
@@ -106,7 +105,6 @@ def test_single_messages_send_once_on_start_and_send_once_operation() -> None:
                 _message("b", mode=TransmissionMode.SINGLE, payload=b"\x04"),
             ),
             sender=sender,
-            authorization_token=None,
         )
         status = await second.send_once()
         assert sent[-2:] == [b"\x03", b"\x04"]
@@ -119,7 +117,7 @@ def test_pause_resume_multiple_cycles_and_stop() -> None:
     async def scenario() -> None:
         sent = 0
 
-        async def sender(_: SendFrameCommand, __: str | None) -> None:
+        async def sender(_: SendFrameCommand) -> None:
             nonlocal sent
             sent += 1
 
@@ -128,7 +126,6 @@ def test_pause_resume_multiple_cycles_and_stop() -> None:
             interface="vcan0",
             messages=(_message("cyclic", period_ms=10),),
             sender=sender,
-            authorization_token=None,
         )
         plan.start()
         await asyncio.sleep(0.035)
@@ -158,7 +155,7 @@ def test_immediate_pause_does_not_cancel_single_messages_from_start() -> None:
     async def scenario() -> None:
         sent: list[bytes] = []
 
-        async def sender(command: SendFrameCommand, _: str | None) -> None:
+        async def sender(command: SendFrameCommand) -> None:
             sent.append(command.data)
 
         plan = TransmissionPlan(
@@ -169,7 +166,6 @@ def test_immediate_pause_does_not_cancel_single_messages_from_start() -> None:
                 _message("cyclic", period_ms=20, payload=b"\x02"),
             ),
             sender=sender,
-            authorization_token=None,
         )
         plan.start()
         await plan.pause()
@@ -184,7 +180,7 @@ def test_errors_and_crc_are_reported_per_message() -> None:
     async def scenario() -> None:
         attempts = 0
 
-        async def sender(command: SendFrameCommand, _: str | None) -> None:
+        async def sender(command: SendFrameCommand) -> None:
             nonlocal attempts
             attempts += 1
             assert command.data[-1] == 0x4B
@@ -197,7 +193,6 @@ def test_errors_and_crc_are_reported_per_message() -> None:
             interface="vcan0",
             messages=(_message("crc", period_ms=10, payload=b"123456789\x00", crc=crc),),
             sender=sender,
-            authorization_token=None,
         )
         plan.start()
         await asyncio.sleep(0.025)
@@ -224,7 +219,7 @@ def test_absolute_deadlines_do_not_accumulate_drift_and_skip_missed_periods() ->
 
 def test_invalid_controls_are_rejected() -> None:
     async def scenario() -> None:
-        async def sender(_: SendFrameCommand, __: str | None) -> None:
+        async def sender(_: SendFrameCommand) -> None:
             pass
 
         plan = TransmissionPlan(
@@ -232,7 +227,6 @@ def test_invalid_controls_are_rejected() -> None:
             interface="vcan0",
             messages=(_message("a"),),
             sender=sender,
-            authorization_token=None,
         )
         with pytest.raises(ConflictError):
             await plan.pause()
@@ -353,14 +347,12 @@ def test_shutdown_stops_cyclic_scheduler() -> None:
     assert len(adapters[0].sent) == count
 
 
-def test_batch_transmission_preserves_physical_interface_token_protection() -> None:
+def test_disabling_physical_tx_stops_active_cyclic_plan() -> None:
     adapter = FakeAdapter()
-    token = "authorized-token-123"
     app = create_app(
         Settings(
             cors_origins=(),
             tx_enabled=True,
-            physical_tx_token=token,
             tx_rate_limit_per_second=100,
         ),
         adapter_factory=lambda: adapter,
@@ -371,19 +363,54 @@ def test_batch_transmission_preserves_physical_interface_token_protection() -> N
             "/api/v1/can/sessions",
             json={"interface": "can0", "filter": {"mode": "all", "ids": []}},
         ).json()
-        path = f"/api/v1/can/sessions/{session['id']}/transmissions/send-once"
-        body = {"messages": [_request_messages()[1]]}
+        base = f"/api/v1/can/sessions/{session['id']}/transmissions"
+        configured = client.post(
+            base,
+            json={"messages": [_request_messages()[0]]},
+        ).json()
+        plan_id = configured["plan_id"]
+        assert client.post(f"{base}/{plan_id}/start").json()["state"] == "running"
+        time.sleep(0.03)
+        assert adapter.sent
 
-        rejected = client.post(path, json=body)
-        assert rejected.status_code == 202
-        assert rejected.json()["send_errors"] == 1
+        disabled = client.put("/api/v1/can/tx-enabled", json={"enabled": False})
+        assert disabled.json() == {"enabled": False}
+        assert client.get(f"{base}/{plan_id}").json()["state"] == "stopped"
+        sent_when_disabled = len(adapter.sent)
+        time.sleep(0.03)
+        assert len(adapter.sent) == sent_when_disabled
+        assert client.get(f"/api/v1/can/sessions/{session['id']}").json()[
+            "state"
+        ] == "connected"
+
+
+def test_physical_cyclic_plan_cannot_start_until_runtime_tx_is_enabled() -> None:
+    adapter = FakeAdapter()
+    app = create_app(
+        Settings(cors_origins=(), tx_rate_limit_per_second=100),
+        adapter_factory=lambda: adapter,
+        discoverer=FakeDiscoverer([CanInterfaceInfo("can0", "physical")]),
+    )
+    with TestClient(app) as client:
+        session = client.post(
+            "/api/v1/can/sessions",
+            json={"interface": "can0", "filter": {"mode": "all", "ids": []}},
+        ).json()
+        base = f"/api/v1/can/sessions/{session['id']}/transmissions"
+        configured = client.post(
+            base,
+            json={"messages": [_request_messages()[0]]},
+        ).json()
+        start_path = f"{base}/{configured['plan_id']}/start"
+
+        blocked = client.post(start_path)
+        assert blocked.status_code == 403
+        assert blocked.json()["code"] == "transmission_disabled"
         assert adapter.sent == []
 
-        accepted = client.post(
-            path,
-            json=body,
-            headers={"X-CAN-TX-Token": token},
-        )
-        assert accepted.status_code == 202
-        assert accepted.json()["sent_frames"] == 1
-        assert len(adapter.sent) == 1
+        assert client.put(
+            "/api/v1/can/tx-enabled", json={"enabled": True}
+        ).json() == {"enabled": True}
+        assert client.post(start_path).json()["state"] == "running"
+        time.sleep(0.03)
+        assert adapter.sent

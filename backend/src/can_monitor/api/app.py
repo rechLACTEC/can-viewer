@@ -6,9 +6,9 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, Protocol
+from typing import Protocol
 
-from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -19,6 +19,7 @@ from can_monitor.api.schemas import (
     SessionCreateRequest,
     TransmissionMessageRequest,
     TransmissionPlanRequest,
+    TxEnabledRequest,
 )
 from can_monitor.application.session import CanSessionManager
 from can_monitor.config import Settings
@@ -92,7 +93,6 @@ def create_app(
         client_queue_size=settings.client_queue_size,
         tx_enabled=settings.tx_enabled,
         virtual_tx_enabled=settings.virtual_tx_enabled,
-        physical_tx_token=settings.physical_tx_token,
         tx_rate_limit_per_second=settings.tx_rate_limit_per_second,
         recording_directory=settings.recording_directory,
         recording_queue_size=settings.recording_queue_size,
@@ -117,7 +117,7 @@ def create_app(
             allow_origins=list(settings.cors_origins),
             allow_credentials=False,
             allow_methods=["GET", "POST", "PUT", "DELETE"],
-            allow_headers=["Content-Type", "X-CAN-TX-Token"],
+            allow_headers=["Content-Type"],
         )
 
     @app.exception_handler(CanMonitorError)
@@ -157,6 +157,15 @@ def create_app(
         items = await discoverer.discover()
         return {"interfaces": [_interface_wire(item) for item in items]}
 
+    @app.get("/api/v1/can/tx-enabled")
+    async def get_tx_enabled() -> dict[str, bool]:
+        return {"enabled": manager.physical_tx_enabled}
+
+    @app.put("/api/v1/can/tx-enabled")
+    async def set_tx_enabled(payload: TxEnabledRequest) -> dict[str, bool]:
+        enabled = await manager.set_physical_tx_enabled(payload.enabled)
+        return {"enabled": enabled}
+
     @app.post("/api/v1/can/sessions", status_code=201)
     async def create_session(payload: SessionCreateRequest) -> dict[str, object]:
         available = await discoverer.discover()
@@ -192,7 +201,6 @@ def create_app(
     async def send_frame(
         session_id: str,
         payload: SendFrameRequest,
-        tx_token: Annotated[str | None, Header(alias="X-CAN-TX-Token")] = None,
     ) -> dict[str, object]:
         session = manager.get(session_id)
         if payload.is_fd and not session.fd:
@@ -205,7 +213,7 @@ def create_app(
             is_fd=payload.is_fd,
             data=parse_hex_payload(payload.data_hex, is_fd=payload.is_fd),
         )
-        await session.send(command, authorization_token=tx_token)
+        await session.send(command)
         return {"status": "submitted"}
 
     @app.post(
@@ -215,11 +223,10 @@ def create_app(
     async def configure_transmission(
         session_id: str,
         payload: TransmissionPlanRequest,
-        tx_token: Annotated[str | None, Header(alias="X-CAN-TX-Token")] = None,
     ) -> dict[str, object]:
         session = manager.get(session_id)
         plan = session.configure_transmission(
-            tuple(message.to_domain() for message in payload.messages), tx_token
+            tuple(message.to_domain() for message in payload.messages)
         )
         return plan.snapshot()
 
@@ -230,11 +237,10 @@ def create_app(
     async def send_transmission_once(
         session_id: str,
         payload: TransmissionPlanRequest,
-        tx_token: Annotated[str | None, Header(alias="X-CAN-TX-Token")] = None,
     ) -> dict[str, object]:
         session = manager.get(session_id)
         plan = await session.send_transmission_once(
-            tuple(message.to_domain() for message in payload.messages), tx_token
+            tuple(message.to_domain() for message in payload.messages)
         )
         return plan.snapshot()
 
@@ -271,7 +277,7 @@ def create_app(
     async def start_transmission(
         session_id: str, plan_id: str
     ) -> dict[str, object]:
-        return manager.get(session_id).get_transmission(plan_id).start()
+        return await manager.get(session_id).start_transmission(plan_id)
 
     @app.post(
         "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}/pause"
