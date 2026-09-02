@@ -22,8 +22,11 @@ void main() {
     expect(find.byKey(const Key('interface-selector')), findsOneWidget);
     expect(find.textContaining('vcan0'), findsWidgets);
 
-    expect(find.text('BLACKLIST'), findsOneWidget);
-    await tester.tap(find.text('WHITELIST'));
+    final filterModeSelector = find.byKey(const Key('filter-mode-selector'));
+    expect(find.text('BLACKLIST'), findsWidgets);
+    await tester.tap(
+      find.descendant(of: filterModeSelector, matching: find.text('WHITELIST')),
+    );
     await tester.pump();
     await tester.enterText(find.byKey(const Key('filter-id-input')), '123');
     await tester.tap(find.byKey(const Key('add-filter')));
@@ -33,7 +36,9 @@ void main() {
     expect(controller.filterMode, CanFilterMode.whitelist);
     expect(controller.filterIds.single.canId, 0x123);
 
-    await tester.tap(find.text('BLACKLIST'));
+    await tester.tap(
+      find.descendant(of: filterModeSelector, matching: find.text('BLACKLIST')),
+    );
     await tester.pump();
     expect(controller.filterMode, CanFilterMode.blacklist);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -220,16 +225,19 @@ void main() {
     expect(controller.displayPaused, isTrue);
     expect(find.text('Gravando'), findsOneWidget);
 
+    await tester.ensureVisible(find.byKey(const Key('pause-recording')));
     await tester.tap(find.byKey(const Key('pause-recording')));
     await tester.pump();
     expect(api.pauseRecordingCount, 1);
     expect(find.text('Gravação pausada'), findsOneWidget);
 
+    await tester.ensureVisible(find.byKey(const Key('resume-recording')));
     await tester.tap(find.byKey(const Key('resume-recording')));
     await tester.pump();
     expect(api.resumeRecordingCount, 1);
     expect(find.text('Gravando'), findsOneWidget);
 
+    await tester.ensureVisible(find.byKey(const Key('stop-recording')));
     await tester.tap(find.byKey(const Key('stop-recording')));
     await tester.pumpAndSettle();
     expect(api.stopRecordingCount, 1);
@@ -327,7 +335,11 @@ void main() {
     streams.connection.controller.add(
       testBatch([
         for (var sequence = 31; sequence <= 40; sequence++)
-          testFrame(sequence: sequence, timestampNs: sequence * 1000000),
+          testFrame(
+            sequence: sequence,
+            timestampNs: sequence * 1000000,
+            isExtended: sequence == 39,
+          ),
       ]),
     );
     await tester.pump(const Duration(milliseconds: 10));
@@ -392,6 +404,26 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('close-frame-inspector')), findsOneWidget);
     expect(find.textContaining('seq 40'), findsOneWidget);
+    expect(find.byKey(const Key('add-frame-to-whitelist')), findsOneWidget);
+    expect(find.byKey(const Key('add-frame-to-blacklist')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('add-frame-to-whitelist')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('add-frame-to-blacklist')));
+    await tester.pump();
+    expect(controller.filterMode, CanFilterMode.all);
+    expect(controller.whitelistFilterIds, const [
+      CanFilterId(canId: 0x123, isExtended: false),
+    ]);
+    expect(controller.blacklistFilterIds, const [
+      CanFilterId(canId: 0x123, isExtended: false),
+    ]);
+    expect(find.text('0x123 STD'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('add-frame-to-whitelist')));
+    await tester.pump();
+    expect(controller.whitelistFilterIds, hasLength(1));
+    expect(find.text('0x123 STD já está na whitelist'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('close-frame-inspector')));
     await tester.pump();
@@ -403,6 +435,21 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('close-frame-inspector')), findsOneWidget);
     expect(find.textContaining('seq 39'), findsOneWidget);
+    expect(find.textContaining('0x00000123 · EXT'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('add-frame-to-whitelist')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('add-frame-to-blacklist')));
+    await tester.pump();
+    expect(controller.whitelistFilterIds, [
+      const CanFilterId(canId: 0x123, isExtended: false),
+      const CanFilterId(canId: 0x123, isExtended: true),
+    ]);
+    expect(controller.blacklistFilterIds, [
+      const CanFilterId(canId: 0x123, isExtended: false),
+      const CanFilterId(canId: 0x123, isExtended: true),
+    ]);
+    expect(find.text('0x00000123 EXT'), findsWidgets);
 
     expect(controller.isConnected, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());

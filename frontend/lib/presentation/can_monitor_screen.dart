@@ -192,6 +192,7 @@ class ConnectionPanel extends StatefulWidget {
 class _ConnectionPanelState extends State<ConnectionPanel> {
   final _filterController = TextEditingController();
   bool _extended = false;
+  CanFilterMode _targetFilterMode = CanFilterMode.whitelist;
   String? _filterError;
 
   @override
@@ -200,15 +201,21 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
     super.dispose();
   }
 
-  void _addFilter() {
+  Future<void> _addFilter() async {
     try {
       final id = parseCanId(_filterController.text, extended: _extended);
-      widget.controller.addFilter(
+      final result = await widget.controller.addFilter(
+        _targetFilterMode,
         CanFilterId(canId: id, isExtended: _extended),
       );
+      if (!mounted) return;
       setState(() {
-        _filterError = null;
-        _filterController.clear();
+        _filterError = result == FilterAddResult.duplicate
+            ? 'ID já está na ${_targetFilterMode.name}'
+            : result == FilterAddResult.failed
+            ? widget.controller.lastError ?? 'Não foi possível adicionar o ID.'
+            : null;
+        if (result == FilterAddResult.added) _filterController.clear();
       });
     } on FormatException catch (error) {
       setState(() => _filterError = error.message);
@@ -302,6 +309,7 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
               ),
             const SizedBox(height: 8),
             SegmentedButton<CanFilterMode>(
+              key: const Key('filter-mode-selector'),
               segments: const [
                 ButtonSegment(value: CanFilterMode.all, label: Text('ALL')),
                 ButtonSegment(
@@ -320,6 +328,25 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
             ),
             ...[
               const SizedBox(height: 12),
+              DropdownButtonFormField<CanFilterMode>(
+                key: const Key('filter-target-selector'),
+                initialValue: _targetFilterMode,
+                decoration: const InputDecoration(labelText: 'Adicionar à'),
+                items: const [
+                  DropdownMenuItem(
+                    value: CanFilterMode.whitelist,
+                    child: Text('WHITELIST'),
+                  ),
+                  DropdownMenuItem(
+                    value: CanFilterMode.blacklist,
+                    child: Text('BLACKLIST'),
+                  ),
+                ],
+                onChanged: (value) => setState(
+                  () => _targetFilterMode = value ?? CanFilterMode.whitelist,
+                ),
+              ),
+              const SizedBox(height: 10),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -353,30 +380,20 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
                   ),
                 ],
               ),
-              Wrap(
-                spacing: 6,
-                children: controller.filterIds
-                    .map(
-                      (id) => InputChip(
-                        label: Text(id.label),
-                        onDeleted: controller.updatingFilters
-                            ? null
-                            : () => controller.removeFilter(id),
-                      ),
-                    )
-                    .toList(growable: false),
+              const SizedBox(height: 10),
+              _FilterIdList(
+                label: 'Whitelist',
+                mode: CanFilterMode.whitelist,
+                ids: controller.whitelistFilterIds,
+                controller: controller,
               ),
-              if (controller.filterIds.isEmpty)
-                Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    controller.filterMode == CanFilterMode.whitelist
-                        ? 'Lista vazia: nenhum frame será exibido.'
-                        : controller.filterMode == CanFilterMode.blacklist
-                        ? 'Lista vazia: nenhum frame será bloqueado.'
-                        : 'Adicione IDs para iniciar uma WHITELIST.',
-                  ),
-                ),
+              const SizedBox(height: 8),
+              _FilterIdList(
+                label: 'Blacklist',
+                mode: CanFilterMode.blacklist,
+                ids: controller.blacklistFilterIds,
+                controller: controller,
+              ),
             ],
             const SizedBox(height: 18),
             SizedBox(
@@ -409,6 +426,49 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
       ),
     );
   }
+}
+
+class _FilterIdList extends StatelessWidget {
+  const _FilterIdList({
+    required this.label,
+    required this.mode,
+    required this.ids,
+    required this.controller,
+  });
+
+  final String label;
+  final CanFilterMode mode;
+  final List<CanFilterId> ids;
+  final CanMonitorController controller;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: Theme.of(context).textTheme.labelLarge),
+      if (ids.isEmpty)
+        Text(
+          mode == CanFilterMode.whitelist
+              ? 'Vazia: nenhum frame é aceito neste modo.'
+              : 'Vazia: nenhum frame é bloqueado neste modo.',
+          style: Theme.of(context).textTheme.bodySmall,
+        )
+      else
+        Wrap(
+          spacing: 6,
+          children: ids
+              .map(
+                (id) => InputChip(
+                  label: Text(id.label),
+                  onDeleted: controller.updatingFilters
+                      ? null
+                      : () => controller.removeFilter(mode, id),
+                ),
+              )
+              .toList(growable: false),
+        ),
+    ],
+  );
 }
 
 class RecordingPanel extends StatelessWidget {
@@ -758,6 +818,27 @@ class _MonitorPanelState extends State<MonitorPanel> {
     });
   }
 
+  Future<void> _addSelectedFrameToFilter(
+    CanFrame frame,
+    CanFilterMode target,
+  ) async {
+    final id = CanFilterId(canId: frame.canId, isExtended: frame.isExtended);
+    final result = await controller.addFilter(target, id);
+    if (!mounted) return;
+    final listName = target == CanFilterMode.whitelist
+        ? 'whitelist'
+        : 'blacklist';
+    final message = switch (result) {
+      FilterAddResult.added => '${id.label} adicionado à $listName',
+      FilterAddResult.duplicate => '${id.label} já está na $listName',
+      FilterAddResult.failed =>
+        controller.lastError ?? 'Não foi possível adicionar à $listName',
+    };
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _setAutoScroll(bool value) {
     setState(() => _autoScroll = value);
     final shouldPauseDisplay = !value;
@@ -873,6 +954,11 @@ class _MonitorPanelState extends State<MonitorPanel> {
               if (controller.selectedFrame case final frame?)
                 _FrameInspector(
                   frame: frame,
+                  addingFilter: controller.updatingFilters,
+                  onAddToWhitelist: () =>
+                      _addSelectedFrameToFilter(frame, CanFilterMode.whitelist),
+                  onAddToBlacklist: () =>
+                      _addSelectedFrameToFilter(frame, CanFilterMode.blacklist),
                   onClose: () => controller.selectFrame(null),
                 ),
             ],
@@ -1172,8 +1258,17 @@ class _DataRowCells extends StatelessWidget {
 }
 
 class _FrameInspector extends StatelessWidget {
-  const _FrameInspector({required this.frame, required this.onClose});
+  const _FrameInspector({
+    required this.frame,
+    required this.addingFilter,
+    required this.onAddToWhitelist,
+    required this.onAddToBlacklist,
+    required this.onClose,
+  });
   final CanFrame frame;
+  final bool addingFilter;
+  final VoidCallback onAddToWhitelist;
+  final VoidCallback onAddToBlacklist;
   final VoidCallback onClose;
 
   @override
@@ -1187,27 +1282,67 @@ class _FrameInspector extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                '${frame.idText} · ${frame.isExtended ? 'EXT' : 'STD'} · '
-                '${frame.isFd ? 'CAN FD' : 'CAN'} · '
-                '${frame.direction.name.toUpperCase()}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            IconButton(
-              key: const Key('close-frame-inspector'),
-              onPressed: onClose,
-              tooltip: 'Fechar detalhes',
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              icon: const Icon(Icons.close, size: 18),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final title = Text(
+              '${frame.idText} · ${frame.isExtended ? 'EXT' : 'STD'} · '
+              '${frame.isFd ? 'CAN FD' : 'CAN'} · '
+              '${frame.direction.name.toUpperCase()}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            );
+            final actions = Wrap(
+              spacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                TextButton.icon(
+                  key: const Key('add-frame-to-whitelist'),
+                  onPressed: addingFilter ? null : onAddToWhitelist,
+                  icon: const Icon(Icons.add, size: 17),
+                  label: const Text('Whitelist'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                TextButton.icon(
+                  key: const Key('add-frame-to-blacklist'),
+                  onPressed: addingFilter ? null : onAddToBlacklist,
+                  icon: const Icon(Icons.add, size: 17),
+                  label: const Text('Blacklist'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('close-frame-inspector'),
+                  onPressed: onClose,
+                  tooltip: 'Fechar detalhes',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  icon: const Icon(Icons.close, size: 18),
+                ),
+              ],
+            );
+            if (constraints.maxWidth >= 650) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: title),
+                  actions,
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                title,
+                Align(alignment: Alignment.centerRight, child: actions),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 6),
         SelectableText('HEX  ${frame.hexText}', style: _mono),

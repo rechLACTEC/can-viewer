@@ -19,6 +19,7 @@ class FakeCanApi implements CanApi {
   int setPhysicalTxEnabledCount = 0;
   CanFilterMode? lastFilterMode;
   List<CanFilterId> lastFilterIds = const [];
+  int updateFiltersCount = 0;
   int sendCount = 0;
   int disconnectCount = 0;
   bool closed = false;
@@ -263,6 +264,7 @@ class FakeCanApi implements CanApi {
     required CanFilterMode mode,
     required List<CanFilterId> ids,
   }) async {
+    updateFiltersCount += 1;
     if (failFilterUpdate) throw const CanApiException('filter rejected');
     lastFilterMode = mode;
     lastFilterIds = ids;
@@ -303,6 +305,7 @@ CanFrame testFrame({
   int timestampNs = 1000000000,
   int? monotonicNs,
   bool isFd = false,
+  bool isExtended = false,
 }) => CanFrame(
   sequence: sequence,
   filterRevision: 1,
@@ -310,7 +313,7 @@ CanFrame testFrame({
   ingressMonotonicNanoseconds: BigInt.from(monotonicNs ?? timestampNs),
   interfaceName: 'vcan0',
   canId: id,
-  isExtended: false,
+  isExtended: isExtended,
   isFd: isFd,
   dlc: 3,
   data: parseHexBytes('01 0A FF'),

@@ -16,6 +16,8 @@ enum MonitorConnectionState {
   error,
 }
 
+enum FilterAddResult { added, duplicate, failed }
+
 class CanMonitorController extends ChangeNotifier {
   CanMonitorController({
     required CanApi api,
@@ -53,7 +55,8 @@ class CanMonitorController extends ChangeNotifier {
   CanInterfaceInfo? selectedInterface;
   MonitorConnectionState connectionState = MonitorConnectionState.disconnected;
   CanFilterMode filterMode = CanFilterMode.all;
-  List<CanFilterId> filterIds = const [];
+  List<CanFilterId> whitelistFilterIds = const [];
+  List<CanFilterId> blacklistFilterIds = const [];
   bool selectedSessionFd = false;
   bool updatingFilters = false;
   int appliedFilterRevision = 0;
@@ -96,6 +99,12 @@ class CanMonitorController extends ChangeNotifier {
 
   bool get transmissionEnabledForActiveInterface =>
       activeInterfaceIsVirtual || physicalTxEnabled;
+  List<CanFilterId> filterIdsFor(CanFilterMode mode) => switch (mode) {
+    CanFilterMode.all => const [],
+    CanFilterMode.whitelist => whitelistFilterIds,
+    CanFilterMode.blacklist => blacklistFilterIds,
+  };
+  List<CanFilterId> get filterIds => filterIdsFor(filterMode);
   bool get streamDegraded =>
       sequenceGapFrames > 0 ||
       duplicateOrReorderedFrames > 0 ||
@@ -144,35 +153,66 @@ class CanMonitorController extends ChangeNotifier {
   }
 
   Future<void> setFilterMode(CanFilterMode value) async {
-    await _applyFilters(value, filterIds);
+    await _applyActiveFilters(value, filterIdsFor(value));
   }
 
-  Future<void> addFilter(CanFilterId value) async {
-    if (filterIds.contains(value)) return;
-    final nextMode = filterMode == CanFilterMode.all
-        ? CanFilterMode.whitelist
-        : filterMode;
-    await _applyFilters(nextMode, [...filterIds, value]);
+  Future<FilterAddResult> addFilter(
+    CanFilterMode target,
+    CanFilterId value,
+  ) async {
+    if (updatingFilters) return FilterAddResult.failed;
+    if (target == CanFilterMode.all) return FilterAddResult.failed;
+    final current = filterIdsFor(target);
+    if (current.contains(value)) return FilterAddResult.duplicate;
+    final next = [...current, value];
+    if (target == filterMode) {
+      final applied = await _applyActiveFilters(target, next);
+      return applied ? FilterAddResult.added : FilterAddResult.failed;
+    }
+    _setFilterIds(target, next);
+    lastError = null;
+    notifyListeners();
+    return FilterAddResult.added;
   }
 
-  Future<void> removeFilter(CanFilterId value) async {
-    final next = filterIds
-        .where((item) => item != value)
-        .toList(growable: false);
-    await _applyFilters(filterMode, next);
+  Future<void> removeFilter(CanFilterMode target, CanFilterId value) async {
+    if (target == CanFilterMode.all) return;
+    final next = filterIdsFor(
+      target,
+    ).where((item) => item != value).toList(growable: false);
+    if (target == filterMode) {
+      await _applyActiveFilters(target, next);
+      return;
+    }
+    _setFilterIds(target, next);
+    lastError = null;
+    notifyListeners();
   }
 
-  Future<void> _applyFilters(
+  void _setFilterIds(CanFilterMode mode, List<CanFilterId> ids) {
+    switch (mode) {
+      case CanFilterMode.all:
+        break;
+      case CanFilterMode.whitelist:
+        whitelistFilterIds = List.unmodifiable(ids);
+        break;
+      case CanFilterMode.blacklist:
+        blacklistFilterIds = List.unmodifiable(ids);
+        break;
+    }
+  }
+
+  Future<bool> _applyActiveFilters(
     CanFilterMode nextMode,
     List<CanFilterId> nextIds,
   ) async {
     final session = _session;
     if (session == null) {
       filterMode = nextMode;
-      filterIds = List.of(nextIds);
+      _setFilterIds(nextMode, nextIds);
       lastError = null;
       notifyListeners();
-      return;
+      return true;
     }
     updatingFilters = true;
     notifyListeners();
@@ -183,15 +223,17 @@ class CanMonitorController extends ChangeNotifier {
         ids: nextMode == CanFilterMode.all ? const [] : nextIds,
       );
       filterMode = nextMode;
-      filterIds = List.of(nextIds);
+      _setFilterIds(nextMode, nextIds);
       appliedFilterRevision = updated.filterRevision;
       lastError = null;
+      return true;
     } catch (error) {
       lastError = _message(error);
+      return false;
     } finally {
       updatingFilters = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> connect() async {
@@ -210,7 +252,7 @@ class CanMonitorController extends ChangeNotifier {
         interfaceName: interface.name,
         isFd: selectedSessionFd,
         mode: filterMode,
-        ids: filterMode == CanFilterMode.all ? const [] : filterIds,
+        ids: filterIdsFor(filterMode),
       );
       appliedFilterRevision = _session!.filterRevision;
       await _openStream();

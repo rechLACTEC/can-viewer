@@ -76,7 +76,7 @@ void main() {
   });
 
   test(
-    'publishes whitelist and blacklist changes only after successful PUT',
+    'keeps whitelist and blacklist independent with exact STD/EXT IDs',
     () async {
       final api = FakeCanApi();
       final controller = CanMonitorController(
@@ -86,47 +86,62 @@ void main() {
       addTearDown(controller.dispose);
       await controller.loadInterfaces();
       await controller.connect();
-      api.failFilterUpdate = true;
 
-      await controller.addFilter(
-        const CanFilterId(canId: 0x123, isExtended: false),
+      const standard = CanFilterId(canId: 0x123, isExtended: false);
+      const extended = CanFilterId(canId: 0x123, isExtended: true);
+      expect(
+        await controller.addFilter(CanFilterMode.whitelist, standard),
+        FilterAddResult.added,
       );
       expect(controller.filterMode, CanFilterMode.all);
       expect(controller.filterIds, isEmpty);
-      expect(controller.lastError, 'filter rejected');
+      expect(controller.whitelistFilterIds, [standard]);
+      expect(api.updateFiltersCount, 0);
 
-      await controller.setFilterMode(CanFilterMode.whitelist);
-      expect(controller.filterMode, CanFilterMode.all);
-      expect(controller.lastError, 'filter rejected');
-
-      api.failFilterUpdate = false;
-      await controller.addFilter(
-        const CanFilterId(canId: 0x123, isExtended: false),
+      expect(
+        await controller.addFilter(CanFilterMode.whitelist, standard),
+        FilterAddResult.duplicate,
       );
-      expect(controller.filterMode, CanFilterMode.whitelist);
-      expect(controller.filterIds, hasLength(1));
-      expect(controller.appliedFilterRevision, 2);
+      await controller.addFilter(CanFilterMode.whitelist, extended);
+      await controller.addFilter(CanFilterMode.blacklist, standard);
+      await controller.addFilter(CanFilterMode.blacklist, extended);
+      expect(controller.filterMode, CanFilterMode.all);
+      expect(controller.whitelistFilterIds, [standard, extended]);
+      expect(controller.blacklistFilterIds, [standard, extended]);
 
       await controller.setFilterMode(CanFilterMode.blacklist);
       expect(controller.filterMode, CanFilterMode.blacklist);
-      expect(controller.filterIds, hasLength(1));
+      expect(controller.filterIds, [standard, extended]);
       expect(api.lastFilterMode, CanFilterMode.blacklist);
+      expect(api.lastFilterIds, [standard, extended]);
 
-      await controller.addFilter(
-        const CanFilterId(canId: 0x123, isExtended: true),
-      );
-      expect(controller.filterIds, hasLength(2));
-      await controller.removeFilter(
-        const CanFilterId(canId: 0x123, isExtended: false),
-      );
-      expect(controller.filterIds, hasLength(1));
-      await controller.removeFilter(controller.filterIds.single);
-      expect(controller.filterIds, isEmpty);
-      expect(controller.filterMode, CanFilterMode.blacklist);
+      const another = CanFilterId(canId: 0x456, isExtended: false);
+      await controller.addFilter(CanFilterMode.blacklist, another);
+      expect(controller.blacklistFilterIds, [standard, extended, another]);
+      expect(api.lastFilterIds, [standard, extended, another]);
 
       await controller.setFilterMode(CanFilterMode.whitelist);
       expect(controller.filterMode, CanFilterMode.whitelist);
-      expect(controller.filterIds, isEmpty);
+      expect(controller.filterIds, [standard, extended]);
+
+      const whiteAnother = CanFilterId(canId: 0x555, isExtended: false);
+      expect(
+        await controller.addFilter(CanFilterMode.whitelist, whiteAnother),
+        FilterAddResult.added,
+      );
+      expect(controller.whitelistFilterIds, [standard, extended, whiteAnother]);
+      expect(api.lastFilterIds, [standard, extended, whiteAnother]);
+      await controller.removeFilter(CanFilterMode.whitelist, whiteAnother);
+      expect(controller.whitelistFilterIds, [standard, extended]);
+
+      api.failFilterUpdate = true;
+      const rejected = CanFilterId(canId: 0x777, isExtended: false);
+      expect(
+        await controller.addFilter(CanFilterMode.whitelist, rejected),
+        FilterAddResult.failed,
+      );
+      expect(controller.whitelistFilterIds, [standard, extended]);
+      expect(controller.lastError, 'filter rejected');
     },
   );
 
