@@ -56,26 +56,29 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Transmissão CAN'), findsWidgets);
-    expect(find.text('Configuração do frame'), findsOneWidget);
-    expect(
-      find.text('A transmissão pode afetar equipamentos reais.'),
-      findsOneWidget,
-    );
+    expect(find.text('Nenhuma mensagem configurada.'), findsOneWidget);
+    expect(find.textContaining('equipamentos reais'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('add-transmission-message')));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('tx-id-input')), '123');
     await tester.enterText(
       find.byKey(const Key('tx-payload-input')),
       '01 0A FF',
     );
-    await tester.ensureVisible(find.byKey(const Key('send-button')));
-    await tester.tap(find.byKey(const Key('send-button')));
+    await tester.tap(find.byKey(const Key('save-transmission-message')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Confirmar transmissão CAN'), findsOneWidget);
-    expect(find.text('Cancelar'), findsOneWidget);
-    expect(api.sendCount, 0);
-    await tester.tap(find.byKey(const Key('confirm-send')));
+    expect(find.text('0x123'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('send-once')));
+    await tester.tap(find.byKey(const Key('send-once')));
     await tester.pumpAndSettle();
-    expect(api.sendCount, 1);
+
+    expect(find.text('Confirmar envio único'), findsOneWidget);
+    expect(find.text('Cancelar'), findsOneWidget);
+    expect(api.sendTransmissionOnceCount, 0);
+    await tester.tap(find.byKey(const Key('confirm-send-once')));
+    await tester.pumpAndSettle();
+    expect(api.sendTransmissionOnceCount, 1);
 
     await tester.tap(find.byKey(const Key('back-to-monitor')));
     await tester.pumpAndSettle();

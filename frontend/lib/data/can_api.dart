@@ -44,6 +44,41 @@ abstract interface class CanApi {
   Future<CanRecording> resumeRecording(String sessionId, String recordingId);
   Future<CanRecording> stopRecording(String sessionId, String recordingId);
   Uri recordingDownloadUri(String recordingId);
+  Future<CanTransmissionPreview> previewTransmission(
+    String sessionId,
+    CanTransmissionMessageConfig message,
+  );
+  Future<CanTransmissionStatus> configureTransmission(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  });
+  Future<CanTransmissionStatus> sendTransmissionOnce(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  });
+  Future<CanTransmissionStatus> startTransmission(
+    String sessionId,
+    String planId,
+  );
+  Future<CanTransmissionStatus> getTransmission(
+    String sessionId,
+    String planId,
+  );
+  Future<CanTransmissionStatus> pauseTransmission(
+    String sessionId,
+    String planId,
+  );
+  Future<CanTransmissionStatus> resumeTransmission(
+    String sessionId,
+    String planId,
+  );
+  Future<CanTransmissionStatus> stopTransmission(
+    String sessionId,
+    String planId,
+  );
+  Future<void> stopAllTransmissions(String sessionId);
   void close();
 }
 
@@ -186,6 +221,123 @@ class HttpCanApi implements CanApi {
   @override
   Uri recordingDownloadUri(String recordingId) =>
       _config.resolve('/api/v1/can/recordings/$recordingId/download');
+
+  @override
+  Future<CanTransmissionPreview> previewTransmission(
+    String sessionId,
+    CanTransmissionMessageConfig message,
+  ) async {
+    final response = await _client
+        .post(
+          _config.resolve(
+            '/api/v1/can/sessions/$sessionId/transmissions/preview',
+          ),
+          headers: _jsonHeaders,
+          body: jsonEncode(message.toJson()),
+        )
+        .timeout(const Duration(seconds: 8));
+    return CanTransmissionPreview.fromJson(_decode(response));
+  }
+
+  @override
+  Future<CanTransmissionStatus> configureTransmission(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  }) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions',
+    body: {'messages': messages.map((item) => item.toJson()).toList()},
+    authorizationToken: authorizationToken,
+  );
+
+  @override
+  Future<CanTransmissionStatus> sendTransmissionOnce(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  }) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/send-once',
+    body: {'messages': messages.map((item) => item.toJson()).toList()},
+    authorizationToken: authorizationToken,
+  );
+
+  @override
+  Future<CanTransmissionStatus> startTransmission(
+    String sessionId,
+    String planId,
+  ) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/$planId/start',
+  );
+
+  @override
+  Future<CanTransmissionStatus> getTransmission(
+    String sessionId,
+    String planId,
+  ) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/$planId',
+    method: 'GET',
+  );
+
+  @override
+  Future<CanTransmissionStatus> pauseTransmission(
+    String sessionId,
+    String planId,
+  ) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/$planId/pause',
+  );
+
+  @override
+  Future<CanTransmissionStatus> resumeTransmission(
+    String sessionId,
+    String planId,
+  ) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/$planId/resume',
+  );
+
+  @override
+  Future<CanTransmissionStatus> stopTransmission(
+    String sessionId,
+    String planId,
+  ) => _transmissionRequest(
+    '/api/v1/can/sessions/$sessionId/transmissions/$planId/stop',
+  );
+
+  @override
+  Future<void> stopAllTransmissions(String sessionId) async {
+    final response = await _client
+        .post(
+          _config.resolve(
+            '/api/v1/can/sessions/$sessionId/transmissions/stop-all',
+          ),
+          headers: _jsonHeaders,
+        )
+        .timeout(const Duration(seconds: 8));
+    _decode(response);
+  }
+
+  Future<CanTransmissionStatus> _transmissionRequest(
+    String path, {
+    String method = 'POST',
+    Map<String, Object?>? body,
+    String? authorizationToken,
+  }) async {
+    final uri = _config.resolve(path);
+    final headers = {
+      ..._jsonHeaders,
+      if (authorizationToken != null && authorizationToken.isNotEmpty)
+        'X-CAN-TX-Token': authorizationToken,
+    };
+    final response =
+        await (method == 'GET'
+                ? _client.get(uri, headers: headers)
+                : _client.post(
+                    uri,
+                    headers: headers,
+                    body: body == null ? null : jsonEncode(body),
+                  ))
+            .timeout(const Duration(seconds: 10));
+    return CanTransmissionStatus.fromJson(_decode(response));
+  }
 
   Future<CanRecording> _recordingRequest(
     String path, {

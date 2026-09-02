@@ -20,6 +20,14 @@ class FakeCanApi implements CanApi {
   int resumeRecordingCount = 0;
   int stopRecordingCount = 0;
   CanRecording? recording;
+  int configureTransmissionCount = 0;
+  int sendTransmissionOnceCount = 0;
+  int startTransmissionCount = 0;
+  int pauseTransmissionCount = 0;
+  int resumeTransmissionCount = 0;
+  int stopTransmissionCount = 0;
+  int stopAllTransmissionsCount = 0;
+  CanTransmissionStatus? transmissionStatus;
 
   @override
   Future<List<CanInterfaceInfo>> listInterfaces() async => interfaces;
@@ -100,6 +108,113 @@ class FakeCanApi implements CanApi {
   Uri recordingDownloadUri(String recordingId) => Uri.parse(
     'http://localhost:8000/api/v1/can/recordings/$recordingId/download',
   );
+
+  @override
+  Future<CanTransmissionPreview> previewTransmission(
+    String sessionId,
+    CanTransmissionMessageConfig message,
+  ) async => const CanTransmissionPreview(
+    payloadHex: '0102030405060744',
+    crcValue: 0x44,
+  );
+
+  @override
+  Future<CanTransmissionStatus> configureTransmission(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  }) async {
+    configureTransmissionCount += 1;
+    return transmissionStatus = testTransmissionStatus(
+      messages,
+      state: CanTransmissionState.stopped,
+    );
+  }
+
+  @override
+  Future<CanTransmissionStatus> sendTransmissionOnce(
+    String sessionId,
+    List<CanTransmissionMessageConfig> messages, {
+    String? authorizationToken,
+  }) async {
+    sendTransmissionOnceCount += 1;
+    return transmissionStatus = testTransmissionStatus(
+      messages,
+      state: CanTransmissionState.stopped,
+      sentFrames: messages.where((item) => item.enabled).length,
+    );
+  }
+
+  @override
+  Future<CanTransmissionStatus> startTransmission(
+    String sessionId,
+    String planId,
+  ) async {
+    startTransmissionCount += 1;
+    return transmissionStatus = _copyTransmissionState(
+      CanTransmissionState.running,
+    );
+  }
+
+  @override
+  Future<CanTransmissionStatus> getTransmission(
+    String sessionId,
+    String planId,
+  ) async => transmissionStatus!;
+
+  @override
+  Future<CanTransmissionStatus> pauseTransmission(
+    String sessionId,
+    String planId,
+  ) async {
+    pauseTransmissionCount += 1;
+    return transmissionStatus = _copyTransmissionState(
+      CanTransmissionState.paused,
+    );
+  }
+
+  @override
+  Future<CanTransmissionStatus> resumeTransmission(
+    String sessionId,
+    String planId,
+  ) async {
+    resumeTransmissionCount += 1;
+    return transmissionStatus = _copyTransmissionState(
+      CanTransmissionState.running,
+    );
+  }
+
+  @override
+  Future<CanTransmissionStatus> stopTransmission(
+    String sessionId,
+    String planId,
+  ) async {
+    stopTransmissionCount += 1;
+    return transmissionStatus = _copyTransmissionState(
+      CanTransmissionState.stopped,
+    );
+  }
+
+  @override
+  Future<void> stopAllTransmissions(String sessionId) async {
+    stopAllTransmissionsCount += 1;
+    transmissionStatus = _copyTransmissionState(CanTransmissionState.stopped);
+  }
+
+  CanTransmissionStatus _copyTransmissionState(CanTransmissionState state) {
+    final current = transmissionStatus!;
+    return CanTransmissionStatus(
+      planId: current.planId,
+      sessionId: current.sessionId,
+      interfaceName: current.interfaceName,
+      state: state,
+      messages: current.messages,
+      sentFrames: current.sentFrames,
+      sendErrors: current.sendErrors,
+      deadlineMisses: current.deadlineMisses,
+      estimatedBusLoadPercent: current.estimatedBusLoadPercent,
+    );
+  }
 
   @override
   Future<CanFrame?> sendFrame(
@@ -209,4 +324,30 @@ CanRecording testRecording({
   sizeBytes: sizeBytes,
   degraded: unsupportedFrames > 0 || droppedFrames > 0,
   filename: 'vcan0_2026-09-01_15-42-18_recording-1.trc',
+);
+
+CanTransmissionStatus testTransmissionStatus(
+  List<CanTransmissionMessageConfig> messages, {
+  CanTransmissionState state = CanTransmissionState.stopped,
+  int sentFrames = 0,
+}) => CanTransmissionStatus(
+  planId: 'plan-1',
+  sessionId: 'session-1',
+  interfaceName: 'vcan0',
+  state: state,
+  messages: messages
+      .map(
+        (item) => CanTransmissionMessageStatus(
+          messageId: item.messageId,
+          state: state == CanTransmissionState.running ? 'active' : state.name,
+          sentFrames: sentFrames,
+          sendErrors: 0,
+          deadlineMisses: 0,
+        ),
+      )
+      .toList(growable: false),
+  sentFrames: sentFrames,
+  sendErrors: 0,
+  deadlineMisses: 0,
+  estimatedBusLoadPercent: 1.2,
 );

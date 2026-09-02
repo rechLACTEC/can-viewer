@@ -1,6 +1,6 @@
 # CAN Monitor Backend
 
-Backend FastAPI para descoberta, aquisição, análise e transmissão manual de frames via
+Backend FastAPI para descoberta, aquisição, análise e transmissão manual/cíclica de frames via
 `python-can`/SocketCAN. O navegador nunca acessa o barramento diretamente.
 
 ## Execução
@@ -29,6 +29,10 @@ idempotente e não remove interfaces existentes.
 - `PUT /api/v1/can/sessions/{id}/filters`
 - `GET /api/v1/can/sessions/{id}/timing`
 - `POST /api/v1/can/sessions/{id}/frames`
+- `POST /api/v1/can/sessions/{id}/transmissions`
+- `POST /api/v1/can/sessions/{id}/transmissions/send-once`
+- `POST /api/v1/can/sessions/{id}/transmissions/{plan_id}/{start|pause|resume|stop}`
+- `GET /api/v1/can/sessions/{id}/transmissions/{plan_id}`
 - `POST /api/v1/can/sessions/{id}/recordings`
 - `POST /api/v1/can/sessions/{id}/recordings/{recording_id}/pause`
 - `POST /api/v1/can/sessions/{id}/recordings/{recording_id}/resume`

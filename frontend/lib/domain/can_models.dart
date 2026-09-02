@@ -6,6 +6,10 @@ enum CanFilterMode { all, filtered }
 
 enum CanRecordingState { idle, recording, paused, finalizing, completed, error }
 
+enum CanTransmissionMode { single, cyclic }
+
+enum CanTransmissionState { stopped, running, paused, error }
+
 class CanInterfaceInfo {
   const CanInterfaceInfo({
     required this.name,
@@ -230,6 +234,194 @@ class CanRecording {
     CanRecordingState.paused,
     CanRecordingState.finalizing,
   }.contains(state);
+}
+
+class CanCrcConfig {
+  const CanCrcConfig({
+    required this.algorithm,
+    required this.rangeStart,
+    required this.rangeEnd,
+    required this.position,
+    this.byteOrder = 'big',
+    this.width,
+    this.polynomial,
+    this.initialValue,
+    this.xorOut,
+    this.reflectInput,
+    this.reflectOutput,
+  });
+
+  final String algorithm;
+  final int rangeStart;
+  final int rangeEnd;
+  final int position;
+  final String byteOrder;
+  final int? width;
+  final int? polynomial;
+  final int? initialValue;
+  final int? xorOut;
+  final bool? reflectInput;
+  final bool? reflectOutput;
+
+  Map<String, Object?> toJson() => {
+    'algorithm': algorithm,
+    'range_start': rangeStart,
+    'range_end': rangeEnd,
+    'position': position,
+    'byte_order': byteOrder,
+    if (algorithm == 'CUSTOM') ...{
+      'width': width,
+      'polynomial': polynomial,
+      'initial_value': initialValue,
+      'xor_out': xorOut,
+      'reflect_input': reflectInput,
+      'reflect_output': reflectOutput,
+    },
+  };
+}
+
+class CanTransmissionMessageConfig {
+  const CanTransmissionMessageConfig({
+    required this.messageId,
+    required this.enabled,
+    required this.canId,
+    required this.isExtended,
+    required this.isFd,
+    required this.dataHex,
+    required this.mode,
+    this.periodMs,
+    this.crc,
+  });
+
+  final String messageId;
+  final bool enabled;
+  final int canId;
+  final bool isExtended;
+  final bool isFd;
+  final String dataHex;
+  final CanTransmissionMode mode;
+  final double? periodMs;
+  final CanCrcConfig? crc;
+
+  double? get frequencyHz => periodMs == null ? null : 1000 / periodMs!;
+
+  CanTransmissionMessageConfig copyWith({String? messageId, bool? enabled}) =>
+      CanTransmissionMessageConfig(
+        messageId: messageId ?? this.messageId,
+        enabled: enabled ?? this.enabled,
+        canId: canId,
+        isExtended: isExtended,
+        isFd: isFd,
+        dataHex: dataHex,
+        mode: mode,
+        periodMs: periodMs,
+        crc: crc,
+      );
+
+  Map<String, Object?> toJson() => {
+    'message_id': messageId,
+    'enabled': enabled,
+    'can_id': canId,
+    'is_extended_id': isExtended,
+    'is_fd': isFd,
+    'data_hex': dataHex.replaceAll(RegExp(r'\s+'), '').toUpperCase(),
+    'mode': mode.name,
+    if (periodMs != null) 'period_ms': periodMs,
+    if (crc != null) 'crc': crc!.toJson(),
+  };
+}
+
+class CanTransmissionMessageStatus {
+  const CanTransmissionMessageStatus({
+    required this.messageId,
+    required this.state,
+    required this.sentFrames,
+    required this.sendErrors,
+    required this.deadlineMisses,
+    this.lastTransmission,
+    this.lastError,
+  });
+
+  factory CanTransmissionMessageStatus.fromJson(Map<String, Object?> json) =>
+      CanTransmissionMessageStatus(
+        messageId: _requiredString(json, 'message_id'),
+        state: _requiredString(json, 'state'),
+        sentFrames: _requiredInt(json, 'sent_frames'),
+        sendErrors: _requiredInt(json, 'send_errors'),
+        deadlineMisses: _requiredInt(json, 'deadline_misses'),
+        lastTransmission: _optionalDateTime(json['last_transmission']),
+        lastError: json['last_error'] as String?,
+      );
+
+  final String messageId;
+  final String state;
+  final int sentFrames;
+  final int sendErrors;
+  final int deadlineMisses;
+  final DateTime? lastTransmission;
+  final String? lastError;
+}
+
+class CanTransmissionStatus {
+  const CanTransmissionStatus({
+    required this.planId,
+    required this.sessionId,
+    required this.interfaceName,
+    required this.state,
+    required this.messages,
+    required this.sentFrames,
+    required this.sendErrors,
+    required this.deadlineMisses,
+    this.estimatedBusLoadPercent,
+  });
+
+  factory CanTransmissionStatus.fromJson(Map<String, Object?> json) {
+    final rawMessages = json['messages'];
+    if (rawMessages is! List) {
+      throw const FormatException('Telemetria de transmissão inválida.');
+    }
+    return CanTransmissionStatus(
+      planId: _requiredString(json, 'plan_id'),
+      sessionId: _requiredString(json, 'session_id'),
+      interfaceName: _requiredString(json, 'interface'),
+      state: CanTransmissionState.values.byName(_requiredString(json, 'state')),
+      messages: rawMessages
+          .map(
+            (item) => CanTransmissionMessageStatus.fromJson(
+              Map<String, Object?>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+      sentFrames: _requiredInt(json, 'sent_frames'),
+      sendErrors: _requiredInt(json, 'send_errors'),
+      deadlineMisses: _requiredInt(json, 'deadline_misses'),
+      estimatedBusLoadPercent: (json['estimated_bus_load_percent'] as num?)
+          ?.toDouble(),
+    );
+  }
+
+  final String planId;
+  final String sessionId;
+  final String interfaceName;
+  final CanTransmissionState state;
+  final List<CanTransmissionMessageStatus> messages;
+  final int sentFrames;
+  final int sendErrors;
+  final int deadlineMisses;
+  final double? estimatedBusLoadPercent;
+}
+
+class CanTransmissionPreview {
+  const CanTransmissionPreview({required this.payloadHex, this.crcValue});
+
+  factory CanTransmissionPreview.fromJson(Map<String, Object?> json) =>
+      CanTransmissionPreview(
+        payloadHex: _requiredString(json, 'payload_hex', allowEmpty: true),
+        crcValue: (json['crc_value'] as num?)?.toInt(),
+      );
+
+  final String payloadHex;
+  final int? crcValue;
 }
 
 class CanFrameBatch {

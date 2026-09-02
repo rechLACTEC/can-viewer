@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from can_monitor.application.recording import RecordingService, RecordingState
+from can_monitor.application.transmission import (
+    TransmissionMessage,
+    TransmissionPlan,
+    TransmissionPlanState,
+)
 from can_monitor.domain.models import (
     CanInterfaceInfo,
     CapturedFrame,
@@ -86,6 +91,7 @@ class CanSession:
         self._recording_queue_size = recording_queue_size
         self._recording_max_bytes = recording_max_bytes
         self._active_recording: RecordingService | None = None
+        self._transmission_plan: TransmissionPlan | None = None
 
     async def connect(self) -> None:
         self.state = SessionState.CONNECTING
@@ -219,6 +225,7 @@ class CanSession:
         if self.state is not SessionState.ERROR:
             self.state = SessionState.DISCONNECTING
         await self._finalize_active_recording()
+        await self.stop_all_transmissions()
         task = self._task
         self._task = None
         if task is not None and task is not asyncio.current_task():
@@ -259,6 +266,71 @@ class CanSession:
         recording = self._active_recording
         if recording is not None:
             await recording.finalize_if_active()
+
+    def configure_transmission(
+        self,
+        messages: tuple[TransmissionMessage, ...],
+        authorization_token: str | None,
+    ) -> TransmissionPlan:
+        if self.state is not SessionState.CONNECTED:
+            raise ConflictError("Transmission requires a connected CAN session")
+        current = self._transmission_plan
+        if current is not None and current.state in {
+            TransmissionPlanState.RUNNING,
+            TransmissionPlanState.PAUSED,
+        }:
+            raise ConflictError("Stop the active transmission before reconfiguring")
+        if any(message.is_fd and not self.fd for message in messages):
+            raise InvalidRequestError(
+                "CAN FD messages require a session opened with CAN FD enabled"
+            )
+        self._transmission_plan = TransmissionPlan(
+            session_id=self.id,
+            interface=self.interface.name,
+            messages=messages,
+            sender=self.send,
+            authorization_token=authorization_token,
+            bitrate=self.interface.bitrate,
+        )
+        return self._transmission_plan
+
+    def get_transmission(self, plan_id: str) -> TransmissionPlan:
+        plan = self._transmission_plan
+        if plan is None or plan.plan_id != plan_id:
+            raise NotFoundError(f"Transmission plan {plan_id} was not found")
+        return plan
+
+    async def send_transmission_once(
+        self,
+        messages: tuple[TransmissionMessage, ...],
+        authorization_token: str | None,
+    ) -> TransmissionPlan:
+        if any(message.is_fd and not self.fd for message in messages):
+            raise InvalidRequestError(
+                "CAN FD messages require a session opened with CAN FD enabled"
+            )
+        plan = TransmissionPlan(
+            session_id=self.id,
+            interface=self.interface.name,
+            messages=messages,
+            sender=self.send,
+            authorization_token=authorization_token,
+            bitrate=self.interface.bitrate,
+        )
+        await plan.send_once()
+        return plan
+
+    async def stop_all_transmissions(self) -> dict[str, object]:
+        plan = self._transmission_plan
+        if plan is None:
+            return {"stopped": 0}
+        if plan.state in {
+            TransmissionPlanState.RUNNING,
+            TransmissionPlanState.PAUSED,
+        }:
+            await plan.stop()
+            return {"stopped": 1, "plan": plan.snapshot()}
+        return {"stopped": 0, "plan": plan.snapshot()}
 
     async def _close_adapter(self) -> None:
         try:

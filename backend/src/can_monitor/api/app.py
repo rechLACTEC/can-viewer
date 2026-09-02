@@ -13,7 +13,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from can_monitor.api.schemas import FilterRequest, SendFrameRequest, SessionCreateRequest
+from can_monitor.api.schemas import (
+    FilterRequest,
+    SendFrameRequest,
+    SessionCreateRequest,
+    TransmissionMessageRequest,
+    TransmissionPlanRequest,
+)
 from can_monitor.application.session import CanSessionManager
 from can_monitor.config import Settings
 from can_monitor.domain.models import CanInterfaceInfo, SendFrameCommand
@@ -201,6 +207,103 @@ def create_app(
         )
         await session.send(command, authorization_token=tx_token)
         return {"status": "submitted"}
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions",
+        status_code=201,
+    )
+    async def configure_transmission(
+        session_id: str,
+        payload: TransmissionPlanRequest,
+        tx_token: Annotated[str | None, Header(alias="X-CAN-TX-Token")] = None,
+    ) -> dict[str, object]:
+        session = manager.get(session_id)
+        plan = session.configure_transmission(
+            tuple(message.to_domain() for message in payload.messages), tx_token
+        )
+        return plan.snapshot()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/send-once",
+        status_code=202,
+    )
+    async def send_transmission_once(
+        session_id: str,
+        payload: TransmissionPlanRequest,
+        tx_token: Annotated[str | None, Header(alias="X-CAN-TX-Token")] = None,
+    ) -> dict[str, object]:
+        session = manager.get(session_id)
+        plan = await session.send_transmission_once(
+            tuple(message.to_domain() for message in payload.messages), tx_token
+        )
+        return plan.snapshot()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/preview"
+    )
+    async def preview_transmission(
+        session_id: str, payload: TransmissionMessageRequest
+    ) -> dict[str, object]:
+        session = manager.get(session_id)
+        message = payload.to_domain()
+        if message.is_fd and not session.fd:
+            from can_monitor.errors import InvalidRequestError
+
+            raise InvalidRequestError(
+                "CAN FD messages require a session opened with CAN FD enabled"
+            )
+        command, crc_value = message.command()
+        return {
+            "message_id": message.message_id,
+            "payload_hex": command.data.hex().upper(),
+            "crc_value": crc_value,
+        }
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/stop-all"
+    )
+    async def stop_all_transmissions(session_id: str) -> dict[str, object]:
+        return await manager.get(session_id).stop_all_transmissions()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}/start"
+    )
+    async def start_transmission(
+        session_id: str, plan_id: str
+    ) -> dict[str, object]:
+        return manager.get(session_id).get_transmission(plan_id).start()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}/pause"
+    )
+    async def pause_transmission(
+        session_id: str, plan_id: str
+    ) -> dict[str, object]:
+        return await manager.get(session_id).get_transmission(plan_id).pause()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}/resume"
+    )
+    async def resume_transmission(
+        session_id: str, plan_id: str
+    ) -> dict[str, object]:
+        return await manager.get(session_id).get_transmission(plan_id).resume()
+
+    @app.post(
+        "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}/stop"
+    )
+    async def stop_transmission(
+        session_id: str, plan_id: str
+    ) -> dict[str, object]:
+        return await manager.get(session_id).get_transmission(plan_id).stop()
+
+    @app.get(
+        "/api/v1/can/sessions/{session_id}/transmissions/{plan_id}"
+    )
+    async def get_transmission(
+        session_id: str, plan_id: str
+    ) -> dict[str, object]:
+        return manager.get(session_id).get_transmission(plan_id).snapshot()
 
     @app.post(
         "/api/v1/can/sessions/{session_id}/recordings",

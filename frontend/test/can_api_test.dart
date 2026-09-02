@@ -96,6 +96,75 @@ void main() {
       api.close();
     },
   );
+
+  test('serializes multi-message transmission and custom CRC', () async {
+    final client = MockClient((request) async {
+      expect(request.url.path, '/api/v1/can/sessions/session-1/transmissions');
+      expect(request.headers['X-CAN-TX-Token'], 'secret');
+      final body = jsonDecode(request.body) as Map<String, Object?>;
+      final messages = body['messages'] as List<Object?>;
+      expect(messages, hasLength(2));
+      final cyclic = messages.first as Map<String, Object?>;
+      expect(cyclic['mode'], 'cyclic');
+      expect(cyclic['period_ms'], 50.0);
+      expect(cyclic['crc'], {
+        'algorithm': 'CUSTOM',
+        'range_start': 0,
+        'range_end': 2,
+        'position': 3,
+        'byte_order': 'big',
+        'width': 8,
+        'polynomial': 0x1D,
+        'initial_value': 0xFF,
+        'xor_out': 0xFF,
+        'reflect_input': false,
+        'reflect_output': false,
+      });
+      return http.Response(jsonEncode(_transmissionResponse()), 201);
+    });
+    final api = HttpCanApi(
+      config: AppConfig(apiBaseUri: Uri.parse('http://localhost:8000')),
+      client: client,
+    );
+
+    final status = await api.configureTransmission('session-1', const [
+      CanTransmissionMessageConfig(
+        messageId: 'cyclic',
+        enabled: true,
+        canId: 0x181,
+        isExtended: false,
+        isFd: false,
+        dataHex: '01 02 03 00',
+        mode: CanTransmissionMode.cyclic,
+        periodMs: 50,
+        crc: CanCrcConfig(
+          algorithm: 'CUSTOM',
+          rangeStart: 0,
+          rangeEnd: 2,
+          position: 3,
+          width: 8,
+          polynomial: 0x1D,
+          initialValue: 0xFF,
+          xorOut: 0xFF,
+          reflectInput: false,
+          reflectOutput: false,
+        ),
+      ),
+      CanTransmissionMessageConfig(
+        messageId: 'single',
+        enabled: true,
+        canId: 0x281,
+        isExtended: false,
+        isFd: false,
+        dataHex: 'AA',
+        mode: CanTransmissionMode.single,
+      ),
+    ], authorizationToken: 'secret');
+
+    expect(status.messages, hasLength(2));
+    expect(status.estimatedBusLoadPercent, 0.25);
+    api.close();
+  });
 }
 
 http.Response _sessionResponse({
@@ -130,4 +199,27 @@ Map<String, Object?> _recordingResponse(String state) => {
   'degraded': false,
   'filename': 'vcan0_recording-1.trc',
   'error': null,
+};
+
+Map<String, Object?> _transmissionResponse() => {
+  'plan_id': 'plan-1',
+  'session_id': 'session-1',
+  'interface': 'vcan0',
+  'state': 'stopped',
+  'sent_frames': 0,
+  'send_errors': 0,
+  'deadline_misses': 0,
+  'estimated_bus_load_percent': 0.25,
+  'messages': [
+    for (final id in ['cyclic', 'single'])
+      {
+        'message_id': id,
+        'state': 'stopped',
+        'sent_frames': 0,
+        'send_errors': 0,
+        'deadline_misses': 0,
+        'last_transmission': null,
+        'last_error': null,
+      },
+  ],
 };

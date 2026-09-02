@@ -38,10 +38,13 @@ class CanMonitorController extends ChangeNotifier {
   CanStreamConnection? _streamConnection;
   Timer? _reconnectTimer;
   Timer? _recordingPollTimer;
+  Timer? _transmissionPollTimer;
   CanSession? _session;
   bool _dirtyFrames = false;
   bool _closingStream = false;
   bool _recordingPolling = false;
+  bool _transmissionPolling = false;
+  int _transmissionMessageSequence = 0;
   int _reconnectAttempt = 0;
   final Set<String> _deletedSessions = {};
   int? _lastSequence;
@@ -63,6 +66,9 @@ class CanMonitorController extends ChangeNotifier {
   bool sending = false;
   bool recordingAction = false;
   CanRecording? recording;
+  bool transmissionAction = false;
+  CanTransmissionStatus? transmissionStatus;
+  List<CanTransmissionMessageConfig> transmissionMessages = const [];
   int receivedCount = 0;
   int framesWhilePaused = 0;
   int overwrittenFrames = 0;
@@ -76,6 +82,7 @@ class CanMonitorController extends ChangeNotifier {
       connectionState == MonitorConnectionState.connected ||
       connectionState == MonitorConnectionState.degraded;
   bool get activeSessionFd => _session?.isFd ?? false;
+  String? get activeInterfaceName => _session?.interfaceName;
   bool get streamDegraded =>
       sequenceGapFrames > 0 ||
       duplicateOrReorderedFrames > 0 ||
@@ -424,6 +431,198 @@ class CanMonitorController extends ChangeNotifier {
   Uri recordingDownloadUri(CanRecording value) =>
       _api.recordingDownloadUri(value.recordingId);
 
+  String nextTransmissionMessageId() =>
+      'message-${++_transmissionMessageSequence}';
+
+  void addTransmissionMessage(CanTransmissionMessageConfig message) {
+    transmissionMessages = [...transmissionMessages, message];
+    notifyListeners();
+  }
+
+  void updateTransmissionMessage(CanTransmissionMessageConfig message) {
+    transmissionMessages = [
+      for (final item in transmissionMessages)
+        if (item.messageId == message.messageId) message else item,
+    ];
+    notifyListeners();
+  }
+
+  void duplicateTransmissionMessage(CanTransmissionMessageConfig message) {
+    addTransmissionMessage(
+      message.copyWith(messageId: nextTransmissionMessageId()),
+    );
+  }
+
+  void removeTransmissionMessage(String messageId) {
+    transmissionMessages = transmissionMessages
+        .where((item) => item.messageId != messageId)
+        .toList(growable: false);
+    notifyListeners();
+  }
+
+  void setTransmissionMessageEnabled(String messageId, bool enabled) {
+    transmissionMessages = [
+      for (final item in transmissionMessages)
+        if (item.messageId == messageId)
+          item.copyWith(enabled: enabled)
+        else
+          item,
+    ];
+    notifyListeners();
+  }
+
+  Future<CanTransmissionPreview?> previewTransmission(
+    CanTransmissionMessageConfig message,
+  ) async {
+    final session = _session;
+    if (session == null) return null;
+    try {
+      return await _api.previewTransmission(session.id, message);
+    } catch (error) {
+      lastError = _message(error);
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<CanTransmissionStatus?> configureTransmission(String? token) async {
+    final session = _session;
+    if (session == null || transmissionAction || transmissionMessages.isEmpty) {
+      return null;
+    }
+    return _runTransmissionAction(() async {
+      transmissionStatus = await _api.configureTransmission(
+        session.id,
+        transmissionMessages,
+        authorizationToken: token,
+      );
+      return transmissionStatus;
+    });
+  }
+
+  Future<void> startConfiguredTransmission() async {
+    final status = transmissionStatus;
+    if (status == null) return;
+    await _runTransmissionAction(() async {
+      transmissionStatus = await _api.startTransmission(
+        status.sessionId,
+        status.planId,
+      );
+      _startTransmissionPolling();
+      return transmissionStatus;
+    });
+  }
+
+  Future<void> sendTransmissionOnce(String? token) async {
+    final session = _session;
+    if (session == null || transmissionMessages.isEmpty) return;
+    await _runTransmissionAction(() async {
+      transmissionStatus = await _api.sendTransmissionOnce(
+        session.id,
+        transmissionMessages,
+        authorizationToken: token,
+      );
+      return transmissionStatus;
+    });
+  }
+
+  Future<void> pauseTransmission() => _controlTransmission(
+    (status) => _api.pauseTransmission(status.sessionId, status.planId),
+  );
+
+  Future<void> resumeTransmission() => _controlTransmission(
+    (status) => _api.resumeTransmission(status.sessionId, status.planId),
+  );
+
+  Future<void> stopTransmission() => _controlTransmission(
+    (status) => _api.stopTransmission(status.sessionId, status.planId),
+    stopPolling: true,
+  );
+
+  Future<void> stopAllTransmissions() async {
+    final session = _session;
+    if (session == null || transmissionAction) return;
+    await _runTransmissionAction(() async {
+      await _api.stopAllTransmissions(session.id);
+      final status = transmissionStatus;
+      if (status != null) {
+        transmissionStatus = await _api.getTransmission(
+          status.sessionId,
+          status.planId,
+        );
+      }
+      _transmissionPollTimer?.cancel();
+      _transmissionPollTimer = null;
+      return transmissionStatus;
+    });
+  }
+
+  Future<void> _controlTransmission(
+    Future<CanTransmissionStatus> Function(CanTransmissionStatus) action, {
+    bool stopPolling = false,
+  }) async {
+    final status = transmissionStatus;
+    if (status == null || transmissionAction) return;
+    await _runTransmissionAction(() async {
+      transmissionStatus = await action(status);
+      if (stopPolling) {
+        _transmissionPollTimer?.cancel();
+        _transmissionPollTimer = null;
+      }
+      return transmissionStatus;
+    });
+  }
+
+  Future<T?> _runTransmissionAction<T>(Future<T?> Function() action) async {
+    transmissionAction = true;
+    lastError = null;
+    notifyListeners();
+    try {
+      return await action();
+    } catch (error) {
+      lastError = _message(error);
+      return null;
+    } finally {
+      transmissionAction = false;
+      notifyListeners();
+    }
+  }
+
+  void _startTransmissionPolling() {
+    _transmissionPollTimer?.cancel();
+    _transmissionPollTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_refreshTransmission()),
+    );
+  }
+
+  Future<void> _refreshTransmission() async {
+    final status = transmissionStatus;
+    if (status == null ||
+        status.state == CanTransmissionState.stopped ||
+        _transmissionPolling ||
+        transmissionAction) {
+      return;
+    }
+    _transmissionPolling = true;
+    try {
+      transmissionStatus = await _api.getTransmission(
+        status.sessionId,
+        status.planId,
+      );
+      if (transmissionStatus?.state == CanTransmissionState.stopped) {
+        _transmissionPollTimer?.cancel();
+        _transmissionPollTimer = null;
+      }
+      notifyListeners();
+    } catch (error) {
+      lastError = _message(error);
+      notifyListeners();
+    } finally {
+      _transmissionPolling = false;
+    }
+  }
+
   Future<void> _performRecordingAction(
     Future<CanRecording> Function() action,
   ) async {
@@ -483,6 +682,8 @@ class CanMonitorController extends ChangeNotifier {
     _reconnectTimer = null;
     _recordingPollTimer?.cancel();
     _recordingPollTimer = null;
+    _transmissionPollTimer?.cancel();
+    _transmissionPollTimer = null;
     await _closeStreamConnection();
     if (session != null) {
       try {
@@ -518,6 +719,7 @@ class CanMonitorController extends ChangeNotifier {
     _refreshTimer.cancel();
     _reconnectTimer?.cancel();
     _recordingPollTimer?.cancel();
+    _transmissionPollTimer?.cancel();
     unawaited(_disposeResources(session));
     super.dispose();
   }
