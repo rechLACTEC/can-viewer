@@ -10,6 +10,7 @@ frontend_dir="$project_dir/frontend"
 backend_port="${CAN_VIEWER_BACKEND_PORT:-8000}"
 frontend_port="${CAN_VIEWER_FRONTEND_PORT:-5173}"
 recording_dir="${CAN_MONITOR_RECORDING_DIRECTORY:-$project_dir/recordings}"
+flutter_bin="${CAN_VIEWER_FLUTTER_BIN:-}"
 
 detect_lan_ip() {
   local detected=""
@@ -41,12 +42,23 @@ if [[ ! "$frontend_port" =~ ^[0-9]+$ ]] || ((frontend_port < 1 || frontend_port 
   exit 2
 fi
 
-for command_name in uv flutter; do
-  if ! command -v "$command_name" >/dev/null 2>&1; then
-    printf 'Erro: comando obrigatório não encontrado: %s\n' "$command_name" >&2
-    exit 3
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'Erro: comando obrigatório não encontrado: uv\n' >&2
+  exit 3
+fi
+
+if [[ -z "$flutter_bin" ]]; then
+  flutter_bin="$(command -v flutter 2>/dev/null || true)"
+  snap_flutter_sdk="${HOME:-}/snap/flutter/common/flutter/bin/flutter"
+  if [[ "$flutter_bin" == "/snap/bin/flutter" && -x "$snap_flutter_sdk" ]]; then
+    flutter_bin="$snap_flutter_sdk"
   fi
-done
+fi
+if [[ -z "$flutter_bin" || ! -x "$flutter_bin" ]]; then
+  printf 'Erro: SDK Flutter executável não encontrado.\n' >&2
+  printf 'Informe-o com CAN_VIEWER_FLUTTER_BIN=/caminho/flutter/bin/flutter.\n' >&2
+  exit 3
+fi
 
 backend_pid=""
 frontend_pid=""
@@ -77,7 +89,7 @@ printf 'Preparando dependências do backend...\n'
 printf 'Preparando dependências do frontend...\n'
 (
   cd -- "$frontend_dir"
-  flutter pub get
+  "$flutter_bin" pub get
 )
 
 api_url="http://$lan_ip:$backend_port"
@@ -99,7 +111,7 @@ backend_pid="$!"
 printf 'Iniciando frontend em %s...\n' "$app_url"
 (
   cd -- "$frontend_dir"
-  exec flutter run -d web-server \
+  exec "$flutter_bin" run -d web-server \
     --web-hostname 0.0.0.0 \
     --web-port "$frontend_port" \
     --dart-define="CAN_API_BASE_URL=$api_url"
