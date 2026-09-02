@@ -48,4 +48,24 @@ flutter test
 flutter run -d chrome --dart-define=CAN_API_BASE_URL=http://localhost:8000
 ```
 
+## Iniciar para acesso na rede local
+
+O script abaixo detecta o IP local, inicia backend e frontend e mostra a URL que pode
+ser aberta em outros dispositivos conectados à mesma rede:
+
+```bash
+./scripts/start.sh
+```
+
+Use `Ctrl+C` para encerrar os dois processos. Se a detecção automática escolher o IP
+errado, informe explicitamente o endereço da máquina:
+
+```bash
+CAN_VIEWER_LAN_IP=192.168.1.10 ./scripts/start.sh
+```
+
+As portas padrão são `5173` para a interface e `8000` para a API. Elas podem ser
+alteradas com `CAN_VIEWER_FRONTEND_PORT` e `CAN_VIEWER_BACKEND_PORT`. O firewall do
+host precisa permitir conexões TCP nessas portas para que outros dispositivos acessem.
+
 Consulte [a documentação do backend](backend/README.md), o [contrato da API](docs/api-contract.md) e os [ADRs](docs/adr/) para detalhes de segurança, filtros, timestamps e limitações de medição de perda.
