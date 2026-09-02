@@ -26,8 +26,17 @@ class TransmissionScreen extends StatefulWidget {
 
 class _TransmissionScreenState extends State<TransmissionScreen> {
   final _tokenController = TextEditingController();
+  String? _selectedMessageId;
 
   CanMonitorController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (controller.transmissionMessages.isNotEmpty) {
+      _selectedMessageId = controller.transmissionMessages.first.messageId;
+    }
+  }
 
   @override
   void dispose() {
@@ -35,21 +44,50 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
     super.dispose();
   }
 
-  Future<void> _edit([CanTransmissionMessageConfig? message]) async {
-    final result = await showDialog<CanTransmissionMessageConfig>(
-      context: context,
-      builder: (_) => _MessageEditorDialog(
-        controller: controller,
-        initial: message,
-        messageId: message?.messageId ?? controller.nextTransmissionMessageId(),
-      ),
-    );
-    if (result == null) return;
-    if (message == null) {
-      controller.addTransmissionMessage(result);
-    } else {
-      controller.updateTransmissionMessage(result);
+  CanTransmissionMessageConfig? get _selectedMessage {
+    for (final message in controller.transmissionMessages) {
+      if (message.messageId == _selectedMessageId) return message;
     }
+    return null;
+  }
+
+  void _addMessage() {
+    final message = CanTransmissionMessageConfig(
+      messageId: controller.nextTransmissionMessageId(),
+      enabled: true,
+      canId: 0x123,
+      isExtended: false,
+      isFd: false,
+      dataHex: '01 02 03 04',
+      mode: CanTransmissionMode.single,
+    );
+    controller.addTransmissionMessage(message);
+    setState(() => _selectedMessageId = message.messageId);
+  }
+
+  void _selectMessage(CanTransmissionMessageConfig message) {
+    setState(() => _selectedMessageId = message.messageId);
+  }
+
+  void _duplicateMessage(CanTransmissionMessageConfig source) {
+    final duplicate = source.copyWith(
+      messageId: controller.nextTransmissionMessageId(),
+    );
+    controller.addTransmissionMessage(duplicate);
+    setState(() => _selectedMessageId = duplicate.messageId);
+  }
+
+  void _removeMessage(CanTransmissionMessageConfig message) {
+    final index = controller.transmissionMessages.indexOf(message);
+    controller.removeTransmissionMessage(message.messageId);
+    final remaining = controller.transmissionMessages;
+    setState(() {
+      if (_selectedMessageId == message.messageId) {
+        _selectedMessageId = remaining.isEmpty
+            ? null
+            : remaining[index.clamp(0, remaining.length - 1)].messageId;
+      }
+    });
   }
 
   String? get _token => _tokenController.text.trim().isEmpty
@@ -119,7 +157,7 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
   String _messageReview(List<CanTransmissionMessageConfig> messages) => messages
       .map(
         (item) =>
-            '${item.isExtended ? 'EXT' : 'STD'} ${_id(item)} · '
+            '${item.isExtended ? 'EXT' : 'STD'} ${_formattedId(item)} · '
             '${item.isFd ? 'CAN FD' : 'CAN'} · '
             '${item.mode == CanTransmissionMode.single ? 'único' : '${item.frequencyHz!.toStringAsFixed(2)} Hz'} · '
             'CRC ${item.crc?.algorithm ?? 'desativado'}',
@@ -184,87 +222,66 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
                     children: [
                       Center(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1200),
+                          constraints: const BoxConstraints(maxWidth: 1600),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                'Transmissão CAN',
-                                style: Theme.of(
-                                  context,
-                                ).textTheme.headlineMedium,
-                              ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'Configure mensagens únicas ou cíclicas. O '
-                                'agendamento e o CRC são executados no backend.',
-                              ),
-                              const SizedBox(height: 20),
-                              Row(
-                                children: [
-                                  FilledButton.icon(
-                                    key: const Key('add-transmission-message'),
-                                    onPressed: active ? null : () => _edit(),
-                                    icon: const Icon(Icons.add),
-                                    label: const Text('Adicionar mensagem'),
-                                  ),
-                                  const Spacer(),
-                                  OutlinedButton.icon(
-                                    key: const Key('stop-all-transmissions'),
-                                    onPressed:
-                                        active && !controller.transmissionAction
-                                        ? controller.stopAllTransmissions
-                                        : null,
-                                    icon: const Icon(
-                                      Icons.stop_circle_outlined,
-                                    ),
-                                    label: const Text('Parar todas'),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              _MessageList(
+                              _HeaderAndControls(
                                 controller: controller,
-                                onEdit: _edit,
-                                locked: active,
+                                tokenController: _tokenController,
+                                active: active,
+                                controls: _controls(active),
+                                onAdd: _addMessage,
                               ),
-                              const SizedBox(height: 16),
-                              _TelemetryCard(
-                                status: controller.transmissionStatus,
-                              ),
-                              const SizedBox(height: 16),
-                              Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(18),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                              const SizedBox(height: 18),
+                              LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final selected = _selectedMessage;
+                                  final list = Column(
                                     children: [
-                                      TextFormField(
-                                        key: const Key('tx-token-input'),
-                                        controller: _tokenController,
-                                        obscureText: true,
-                                        enabled: !active,
-                                        decoration: const InputDecoration(
-                                          labelText:
-                                              'Token TX para interface física (opcional)',
-                                        ),
+                                      _MessageList(
+                                        controller: controller,
+                                        selectedMessageId: _selectedMessageId,
+                                        onSelected: _selectMessage,
+                                        onDuplicate: _duplicateMessage,
+                                        onRemove: _removeMessage,
+                                        locked: active,
                                       ),
                                       const SizedBox(height: 14),
-                                      Wrap(
-                                        spacing: 10,
-                                        runSpacing: 10,
-                                        children: _controls(active),
+                                      _TelemetryCard(
+                                        status: controller.transmissionStatus,
                                       ),
-                                      if (!controller.isConnected) ...[
-                                        const SizedBox(height: 12),
-                                        const Text(
-                                          'Conecte uma sessão no Monitor para transmitir.',
-                                        ),
-                                      ],
                                     ],
-                                  ),
-                                ),
+                                  );
+                                  final editor = selected == null
+                                      ? const _EmptyEditor()
+                                      : _MessageEditor(
+                                          key: ObjectKey(selected),
+                                          controller: controller,
+                                          initial: selected,
+                                          locked: active,
+                                          onSaved: controller
+                                              .updateTransmissionMessage,
+                                        );
+                                  if (constraints.maxWidth >= 1250) {
+                                    return Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(flex: 3, child: list),
+                                        const SizedBox(width: 18),
+                                        Expanded(flex: 2, child: editor),
+                                      ],
+                                    );
+                                  }
+                                  return Column(
+                                    children: [
+                                      list,
+                                      const SizedBox(height: 18),
+                                      editor,
+                                    ],
+                                  );
+                                },
                               ),
                               const SizedBox(height: 16),
                               const _SafetyCard(),
@@ -334,15 +351,121 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
   }
 }
 
+class _HeaderAndControls extends StatelessWidget {
+  const _HeaderAndControls({
+    required this.controller,
+    required this.tokenController,
+    required this.active,
+    required this.controls,
+    required this.onAdd,
+  });
+
+  final CanMonitorController controller;
+  final TextEditingController tokenController;
+  final bool active;
+  final List<Widget> controls;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Transmissão CAN',
+        style: Theme.of(context).textTheme.headlineMedium,
+      ),
+      const SizedBox(height: 6),
+      const Text(
+        'Configure mensagens únicas ou cíclicas. O agendamento e o CRC são '
+        'executados no backend.',
+      ),
+      const SizedBox(height: 16),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    key: const Key('add-transmission-message'),
+                    onPressed: active ? null : onAdd,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Adicionar mensagem'),
+                  ),
+                  ...controls,
+                  OutlinedButton.icon(
+                    key: const Key('stop-all-transmissions'),
+                    onPressed: active && !controller.transmissionAction
+                        ? controller.stopAllTransmissions
+                        : null,
+                    icon: const Icon(Icons.stop_circle_outlined),
+                    label: const Text('Parar todas'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: TextFormField(
+                  key: const Key('tx-token-input'),
+                  controller: tokenController,
+                  obscureText: true,
+                  enabled: !active,
+                  decoration: const InputDecoration(
+                    labelText: 'Token TX para interface física (opcional)',
+                  ),
+                ),
+              ),
+              if (!controller.isConnected) ...[
+                const SizedBox(height: 10),
+                const Text('Conecte uma sessão no Monitor para transmitir.'),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class _EmptyEditor extends StatelessWidget {
+  const _EmptyEditor();
+
+  @override
+  Widget build(BuildContext context) => const Card(
+    key: Key('inline-message-editor-empty'),
+    child: Padding(
+      padding: EdgeInsets.all(32),
+      child: Center(
+        child: Text(
+          'Adicione ou selecione uma mensagem para editar seus parâmetros.',
+          textAlign: TextAlign.center,
+        ),
+      ),
+    ),
+  );
+}
+
 class _MessageList extends StatelessWidget {
   const _MessageList({
     required this.controller,
-    required this.onEdit,
+    required this.selectedMessageId,
+    required this.onSelected,
+    required this.onDuplicate,
+    required this.onRemove,
     required this.locked,
   });
 
   final CanMonitorController controller;
-  final ValueChanged<CanTransmissionMessageConfig> onEdit;
+  final String? selectedMessageId;
+  final ValueChanged<CanTransmissionMessageConfig> onSelected;
+  final ValueChanged<CanTransmissionMessageConfig> onDuplicate;
+  final ValueChanged<CanTransmissionMessageConfig> onRemove;
   final bool locked;
 
   @override
@@ -371,17 +494,16 @@ class _MessageList extends StatelessWidget {
                   _MessageRow(
                     message: message,
                     status: statuses[message.messageId],
+                    selected: selectedMessageId == message.messageId,
                     locked: locked,
                     onEnabled: (value) =>
                         controller.setTransmissionMessageEnabled(
                           message.messageId,
                           value,
                         ),
-                    onEdit: () => onEdit(message),
-                    onDuplicate: () =>
-                        controller.duplicateTransmissionMessage(message),
-                    onRemove: () =>
-                        controller.removeTransmissionMessage(message.messageId),
+                    onSelected: () => onSelected(message),
+                    onDuplicate: () => onDuplicate(message),
+                    onRemove: () => onRemove(message),
                   ),
               ],
             ),
@@ -396,90 +518,108 @@ class _MessageRow extends StatelessWidget {
   const _MessageRow({
     required this.message,
     required this.status,
+    required this.selected,
     required this.locked,
     required this.onEnabled,
-    required this.onEdit,
+    required this.onSelected,
     required this.onDuplicate,
     required this.onRemove,
   });
 
   final CanTransmissionMessageConfig message;
   final CanTransmissionMessageStatus? status;
+  final bool selected;
   final bool locked;
   final ValueChanged<bool> onEnabled;
-  final VoidCallback onEdit;
+  final VoidCallback onSelected;
   final VoidCallback onDuplicate;
   final VoidCallback onRemove;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => InkWell(
     key: Key('transmission-message-${message.messageId}'),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: Colors.white12)),
-    ),
-    child: Row(
-      children: [
-        Switch(value: message.enabled, onChanged: locked ? null : onEnabled),
-        SizedBox(
-          width: 105,
-          child: Text(
-            _id(message),
-            style: const TextStyle(fontFamily: 'monospace'),
+    onTap: onSelected,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: selected
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.28)
+            : null,
+        border: Border(
+          left: BorderSide(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : Colors.transparent,
+            width: 3,
           ),
+          bottom: const BorderSide(color: Colors.white12),
         ),
-        SizedBox(width: 62, child: Text(message.isExtended ? 'EXT' : 'STD')),
-        Expanded(
-          flex: 3,
-          child: Text(
-            _spacedHex(message.dataHex),
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontFamily: 'monospace'),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            message.mode == CanTransmissionMode.single
-                ? 'Único'
-                : '${message.frequencyHz!.toStringAsFixed(2)} Hz',
-          ),
-        ),
-        Expanded(child: Text(message.crc?.algorithm ?? 'Sem CRC')),
-        SizedBox(
-          width: 90,
-          child: Text(
-            (status?.state ?? 'parada').toUpperCase(),
-            style: TextStyle(
-              color: status?.state == 'error' ? Colors.redAccent : null,
+      ),
+      child: Row(
+        children: [
+          Switch(value: message.enabled, onChanged: locked ? null : onEnabled),
+          SizedBox(
+            width: 105,
+            child: Text(
+              _formattedId(message),
+              style: const TextStyle(fontFamily: 'monospace'),
             ),
           ),
-        ),
-        Tooltip(
-          message: [
-            'Enviados ${status?.sentFrames ?? 0} · Erros ${status?.sendErrors ?? 0} · Misses ${status?.deadlineMisses ?? 0}',
-            if (status?.lastTransmission case final timestamp?)
-              'Último envio: ${timestamp.toLocal()}',
-            if (status?.lastError case final error?) 'Último erro: $error',
-          ].join('\n'),
-          child: const Icon(Icons.query_stats, size: 18),
-        ),
-        IconButton(
-          key: Key('edit-${message.messageId}'),
-          tooltip: 'Editar',
-          onPressed: locked ? null : onEdit,
-          icon: const Icon(Icons.edit_outlined),
-        ),
-        IconButton(
-          tooltip: 'Duplicar',
-          onPressed: locked ? null : onDuplicate,
-          icon: const Icon(Icons.copy_outlined),
-        ),
-        IconButton(
-          tooltip: 'Remover',
-          onPressed: locked ? null : onRemove,
-          icon: const Icon(Icons.delete_outline),
-        ),
-      ],
+          SizedBox(width: 62, child: Text(message.isExtended ? 'EXT' : 'STD')),
+          Expanded(
+            flex: 3,
+            child: Text(
+              _spacedHex(message.dataHex),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              message.mode == CanTransmissionMode.single
+                  ? 'Único'
+                  : '${message.frequencyHz!.toStringAsFixed(2)} Hz',
+            ),
+          ),
+          Expanded(child: Text(message.crc?.algorithm ?? 'Sem CRC')),
+          SizedBox(
+            width: 90,
+            child: Text(
+              (status?.state ?? 'parada').toUpperCase(),
+              style: TextStyle(
+                color: status?.state == 'error' ? Colors.redAccent : null,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: [
+              'Enviados ${status?.sentFrames ?? 0} · Erros ${status?.sendErrors ?? 0} · Misses ${status?.deadlineMisses ?? 0}',
+              if (status?.lastTransmission case final timestamp?)
+                'Último envio: ${timestamp.toLocal()}',
+              if (status?.lastError case final error?) 'Último erro: $error',
+            ].join('\n'),
+            child: const Icon(Icons.query_stats, size: 18),
+          ),
+          IconButton(
+            key: Key('edit-${message.messageId}'),
+            tooltip: 'Selecionar para editar',
+            onPressed: onSelected,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            tooltip: 'Duplicar',
+            onPressed: locked ? null : onDuplicate,
+            icon: const Icon(Icons.copy_outlined),
+          ),
+          IconButton(
+            tooltip: 'Remover',
+            onPressed: locked ? null : onRemove,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -514,22 +654,25 @@ class _TelemetryCard extends StatelessWidget {
   }
 }
 
-class _MessageEditorDialog extends StatefulWidget {
-  const _MessageEditorDialog({
+class _MessageEditor extends StatefulWidget {
+  const _MessageEditor({
     required this.controller,
-    required this.messageId,
-    this.initial,
+    required this.initial,
+    required this.locked,
+    required this.onSaved,
+    super.key,
   });
 
   final CanMonitorController controller;
-  final String messageId;
-  final CanTransmissionMessageConfig? initial;
+  final CanTransmissionMessageConfig initial;
+  final bool locked;
+  final ValueChanged<CanTransmissionMessageConfig> onSaved;
 
   @override
-  State<_MessageEditorDialog> createState() => _MessageEditorDialogState();
+  State<_MessageEditor> createState() => _MessageEditorState();
 }
 
-class _MessageEditorDialogState extends State<_MessageEditorDialog> {
+class _MessageEditorState extends State<_MessageEditor> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _id;
   late final TextEditingController _payload;
@@ -557,13 +700,13 @@ class _MessageEditorDialogState extends State<_MessageEditorDialog> {
   void initState() {
     super.initState();
     final value = widget.initial;
-    final crc = value?.crc;
+    final crc = value.crc;
     _id = TextEditingController(
-      text: value?.canId.toRadixString(16).toUpperCase() ?? '123',
+      text: value.canId.toRadixString(16).toUpperCase(),
     );
-    _payload = TextEditingController(text: value?.dataHex ?? '01 02 03 04');
+    _payload = TextEditingController(text: value.dataHex);
     _rate = TextEditingController(
-      text: value?.frequencyHz?.toStringAsFixed(2) ?? '10',
+      text: value.frequencyHz?.toStringAsFixed(2) ?? '10',
     );
     _rangeStart = TextEditingController(text: '${crc?.rangeStart ?? 0}');
     _rangeEnd = TextEditingController(text: '${crc?.rangeEnd ?? 2}');
@@ -573,10 +716,10 @@ class _MessageEditorDialogState extends State<_MessageEditorDialog> {
       text: _hex(crc?.initialValue ?? 0xFF),
     );
     _xorOut = TextEditingController(text: _hex(crc?.xorOut ?? 0xFF));
-    _enabled = value?.enabled ?? true;
-    _extended = value?.isExtended ?? false;
-    _fd = value?.isFd ?? false;
-    _mode = value?.mode ?? CanTransmissionMode.single;
+    _enabled = value.enabled;
+    _extended = value.isExtended;
+    _fd = value.isFd;
+    _mode = value.mode;
     _crcEnabled = crc != null;
     _algorithm = crc?.algorithm ?? _crcAlgorithms.first;
     _width = crc?.width ?? 8;
@@ -655,7 +798,7 @@ class _MessageEditorDialogState extends State<_MessageEditorDialog> {
       }
     }
     return CanTransmissionMessageConfig(
-      messageId: widget.messageId,
+      messageId: widget.initial.messageId,
       enabled: _enabled,
       canId: parseCanId(_id.text, extended: _extended),
       isExtended: _extended,
@@ -681,186 +824,225 @@ class _MessageEditorDialogState extends State<_MessageEditorDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.initial == null ? 'Adicionar mensagem' : 'Editar mensagem',
-    ),
-    content: SizedBox(
-      width: 720,
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Card(
+    key: const Key('inline-message-editor'),
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Mensagem habilitada'),
-                value: _enabled,
-                onChanged: (value) => setState(() => _enabled = value),
+              const Icon(Icons.tune),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Editar ${_formattedId(widget.initial)}',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
               ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      key: const Key('tx-id-input'),
-                      controller: _id,
+              const Chip(label: Text('Editor na página')),
+            ],
+          ),
+          if (widget.locked) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Pare a transmissão para alterar esta configuração.',
+              style: TextStyle(color: Colors.amber),
+            ),
+          ],
+          const SizedBox(height: 12),
+          AbsorbPointer(
+            absorbing: widget.locked,
+            child: Opacity(
+              opacity: widget.locked ? 0.55 : 1,
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Mensagem habilitada'),
+                      value: _enabled,
+                      onChanged: (value) => setState(() => _enabled = value),
+                    ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            key: const Key('tx-id-input'),
+                            controller: _id,
+                            decoration: const InputDecoration(
+                              labelText: 'CAN ID (HEX)',
+                            ),
+                            validator: (value) {
+                              try {
+                                parseCanId(value ?? '', extended: _extended);
+                                return null;
+                              } on FormatException catch (error) {
+                                return error.message;
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          width: 110,
+                          child: DropdownButtonFormField<bool>(
+                            initialValue: _extended,
+                            decoration: const InputDecoration(
+                              labelText: 'Tipo',
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: false,
+                                child: Text('STD'),
+                              ),
+                              DropdownMenuItem(value: true, child: Text('EXT')),
+                            ],
+                            onChanged: (value) =>
+                                setState(() => _extended = value ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          width: 110,
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('CAN FD'),
+                            value: _fd && widget.controller.activeSessionFd,
+                            onChanged: widget.controller.activeSessionFd
+                                ? (value) => setState(() => _fd = value)
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('tx-payload-input'),
+                      controller: _payload,
                       decoration: const InputDecoration(
-                        labelText: 'CAN ID (HEX)',
+                        labelText: 'Payload hexadecimal',
+                        hintText: '01 02 03 04',
                       ),
+                      minLines: 2,
+                      maxLines: 4,
                       validator: (value) {
                         try {
-                          parseCanId(value ?? '', extended: _extended);
+                          parseHexBytes(value ?? '');
                           return null;
                         } on FormatException catch (error) {
                           return error.message;
                         }
                       },
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 110,
-                    child: DropdownButtonFormField<bool>(
-                      initialValue: _extended,
-                      decoration: const InputDecoration(labelText: 'Tipo'),
-                      items: const [
-                        DropdownMenuItem(value: false, child: Text('STD')),
-                        DropdownMenuItem(value: true, child: Text('EXT')),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<CanTransmissionMode>(
+                            key: const Key('tx-mode-selector'),
+                            initialValue: _mode,
+                            decoration: const InputDecoration(
+                              labelText: 'Modo',
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: CanTransmissionMode.single,
+                                child: Text('Único'),
+                              ),
+                              DropdownMenuItem(
+                                value: CanTransmissionMode.cyclic,
+                                child: Text('Cíclico'),
+                              ),
+                            ],
+                            onChanged: (value) =>
+                                setState(() => _mode = value ?? _mode),
+                          ),
+                        ),
+                        if (_mode == CanTransmissionMode.cyclic) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextFormField(
+                              key: const Key('tx-rate-input'),
+                              controller: _rate,
+                              decoration: InputDecoration(
+                                labelText: _rateInHz
+                                    ? 'Frequência (Hz)'
+                                    : 'Período (ms)',
+                              ),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              validator: _positiveNumber,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: true, label: Text('Hz')),
+                              ButtonSegment(value: false, label: Text('ms')),
+                            ],
+                            selected: {_rateInHz},
+                            onSelectionChanged: (selection) {
+                              final current = double.tryParse(
+                                _rate.text.replaceAll(',', '.'),
+                              );
+                              setState(() {
+                                if (current != null && current > 0) {
+                                  _rate.text = (1000 / current).toStringAsFixed(
+                                    3,
+                                  );
+                                }
+                                _rateInHz = selection.first;
+                              });
+                            },
+                          ),
+                        ],
                       ],
-                      onChanged: (value) =>
-                          setState(() => _extended = value ?? false),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 110,
-                    child: SwitchListTile(
+                    const Divider(height: 30),
+                    SwitchListTile(
+                      key: const Key('crc-enabled'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('CAN FD'),
-                      value: _fd && widget.controller.activeSessionFd,
-                      onChanged: widget.controller.activeSessionFd
-                          ? (value) => setState(() => _fd = value)
-                          : null,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                key: const Key('tx-payload-input'),
-                controller: _payload,
-                decoration: const InputDecoration(
-                  labelText: 'Payload hexadecimal',
-                  hintText: '01 02 03 04',
-                ),
-                minLines: 2,
-                maxLines: 4,
-                validator: (value) {
-                  try {
-                    parseHexBytes(value ?? '');
-                    return null;
-                  } on FormatException catch (error) {
-                    return error.message;
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<CanTransmissionMode>(
-                      key: const Key('tx-mode-selector'),
-                      initialValue: _mode,
-                      decoration: const InputDecoration(labelText: 'Modo'),
-                      items: const [
-                        DropdownMenuItem(
-                          value: CanTransmissionMode.single,
-                          child: Text('Único'),
-                        ),
-                        DropdownMenuItem(
-                          value: CanTransmissionMode.cyclic,
-                          child: Text('Cíclico'),
-                        ),
-                      ],
-                      onChanged: (value) =>
-                          setState(() => _mode = value ?? _mode),
-                    ),
-                  ),
-                  if (_mode == CanTransmissionMode.cyclic) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextFormField(
-                        key: const Key('tx-rate-input'),
-                        controller: _rate,
-                        decoration: InputDecoration(
-                          labelText: _rateInHz
-                              ? 'Frequência (Hz)'
-                              : 'Período (ms)',
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        validator: _positiveNumber,
+                      title: const Text('Calcular CRC automaticamente'),
+                      subtitle: const Text(
+                        'Recalculado no backend antes de cada envio.',
                       ),
+                      value: _crcEnabled,
+                      onChanged: (value) => setState(() {
+                        _crcEnabled = value;
+                        _preview = null;
+                      }),
                     ),
-                    const SizedBox(width: 10),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: true, label: Text('Hz')),
-                        ButtonSegment(value: false, label: Text('ms')),
-                      ],
-                      selected: {_rateInHz},
-                      onSelectionChanged: (selection) {
-                        final current = double.tryParse(
-                          _rate.text.replaceAll(',', '.'),
-                        );
-                        setState(() {
-                          if (current != null && current > 0) {
-                            _rate.text = (1000 / current).toStringAsFixed(3);
-                          }
-                          _rateInHz = selection.first;
-                        });
-                      },
-                    ),
+                    if (_crcEnabled) ..._crcFields(),
                   ],
-                ],
-              ),
-              const Divider(height: 30),
-              SwitchListTile(
-                key: const Key('crc-enabled'),
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Calcular CRC automaticamente'),
-                subtitle: const Text(
-                  'Recalculado no backend antes de cada envio.',
                 ),
-                value: _crcEnabled,
-                onChanged: (value) => setState(() {
-                  _crcEnabled = value;
-                  _preview = null;
-                }),
               ),
-              if (_crcEnabled) ..._crcFields(),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const Key('save-transmission-message'),
+              onPressed: widget.locked
+                  ? null
+                  : () {
+                      final value = _buildValue();
+                      if (value != null) widget.onSaved(value);
+                    },
+              icon: const Icon(Icons.check),
+              label: const Text('Aplicar alterações'),
+            ),
+          ),
+        ],
       ),
     ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancelar'),
-      ),
-      FilledButton(
-        key: const Key('save-transmission-message'),
-        onPressed: () {
-          final value = _buildValue();
-          if (value != null) Navigator.pop(context, value);
-        },
-        child: const Text('Salvar mensagem'),
-      ),
-    ],
   );
 
   List<Widget> _crcFields() => [
@@ -1041,7 +1223,7 @@ String? _positiveNumber(String? value) {
       : null;
 }
 
-String _id(CanTransmissionMessageConfig value) =>
+String _formattedId(CanTransmissionMessageConfig value) =>
     '0x${value.canId.toRadixString(16).toUpperCase().padLeft(value.isExtended ? 8 : 3, '0')}';
 
 String _spacedHex(String value) {

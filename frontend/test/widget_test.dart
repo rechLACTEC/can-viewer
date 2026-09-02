@@ -38,7 +38,7 @@ void main() {
   testWidgets('validates transmission and asks for explicit confirmation', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    await tester.binding.setSurfaceSize(const Size(900, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final api = FakeCanApi();
     final streams = FakeStreamConnector();
@@ -60,16 +60,22 @@ void main() {
     expect(find.textContaining('equipamentos reais'), findsOneWidget);
     await tester.tap(find.byKey(const Key('add-transmission-message')));
     await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byKey(const Key('inline-message-editor')), findsOneWidget);
+    expect(controller.transmissionMessages, hasLength(1));
     await tester.enterText(find.byKey(const Key('tx-id-input')), '123');
     await tester.enterText(
       find.byKey(const Key('tx-payload-input')),
       '01 0A FF',
     );
+    await tester.drag(find.byType(ListView), const Offset(0, -700));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-transmission-message')));
     await tester.pumpAndSettle();
 
     expect(find.text('0x123'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('send-once')));
+    await tester.drag(find.byType(ListView), const Offset(0, 1000));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('send-once')));
     await tester.pumpAndSettle();
 
