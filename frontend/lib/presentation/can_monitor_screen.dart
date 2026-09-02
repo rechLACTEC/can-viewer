@@ -305,8 +305,12 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
               segments: const [
                 ButtonSegment(value: CanFilterMode.all, label: Text('ALL')),
                 ButtonSegment(
-                  value: CanFilterMode.filtered,
-                  label: Text('IDs selecionados'),
+                  value: CanFilterMode.whitelist,
+                  label: Text('WHITELIST'),
+                ),
+                ButtonSegment(
+                  value: CanFilterMode.blacklist,
+                  label: Text('BLACKLIST'),
                 ),
               ],
               selected: {controller.filterMode},
@@ -363,9 +367,15 @@ class _ConnectionPanelState extends State<ConnectionPanel> {
                     .toList(growable: false),
               ),
               if (controller.filterIds.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(top: 8),
-                  child: Text('Adicione ao menos um ID para conectar.'),
+                  child: Text(
+                    controller.filterMode == CanFilterMode.whitelist
+                        ? 'Lista vazia: nenhum frame será exibido.'
+                        : controller.filterMode == CanFilterMode.blacklist
+                        ? 'Lista vazia: nenhum frame será bloqueado.'
+                        : 'Adicione IDs para iniciar uma WHITELIST.',
+                  ),
                 ),
             ],
             const SizedBox(height: 18),

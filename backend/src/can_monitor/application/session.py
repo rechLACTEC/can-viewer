@@ -14,6 +14,7 @@ from pathlib import Path
 from can_monitor.application.recording import RecordingService, RecordingState
 from can_monitor.application.transmission import (
     TransmissionMessage,
+    TransmissionMode,
     TransmissionPlan,
     TransmissionPlanState,
 )
@@ -80,7 +81,8 @@ class CanSession:
         self._physical_tx_enabled = tx_enabled
         self._virtual_tx_enabled = virtual_tx_enabled
         self._tx_rate_limit_per_second = tx_rate_limit_per_second
-        self._tx_timestamps: deque[float] = deque()
+        self._tx_tokens = float(tx_rate_limit_per_second)
+        self._tx_last_refill = time.monotonic()
         self._tx_lock = asyncio.Lock()
         self._subscribers_closed = False
         self._recording_directory = recording_directory
@@ -107,6 +109,8 @@ class CanSession:
                 # Frames processed before an update retain the old revision; frames
                 # processed after set_filters returns receive the new revision.
                 async with self._filter_lock:
+                    if not self.filters.allows(frame):
+                        continue
                     self._sequence += 1
                     captured = CapturedFrame(
                         sequence=self._sequence,
@@ -149,10 +153,13 @@ class CanSession:
         async with self._tx_lock:
             self._ensure_transmission_enabled()
             now = time.monotonic()
-            cutoff = now - 1.0
-            while self._tx_timestamps and self._tx_timestamps[0] <= cutoff:
-                self._tx_timestamps.popleft()
-            if len(self._tx_timestamps) >= self._tx_rate_limit_per_second:
+            elapsed = max(0.0, now - self._tx_last_refill)
+            self._tx_tokens = min(
+                float(self._tx_rate_limit_per_second),
+                self._tx_tokens + elapsed * self._tx_rate_limit_per_second,
+            )
+            self._tx_last_refill = now
+            if self._tx_tokens < 1.0:
                 raise RateLimitError(
                     "The configured CAN transmission rate limit was exceeded"
                 )
@@ -176,7 +183,7 @@ class CanSession:
                     command.can_id,
                 )
                 raise
-            self._tx_timestamps.append(now)
+            self._tx_tokens -= 1.0
             logger.info(
                 "Manual CAN frame submitted session=%s interface=%s id=0x%X",
                 self.id,
@@ -277,6 +284,16 @@ class CanSession:
         if any(message.is_fd and not self.fd for message in messages):
             raise InvalidRequestError(
                 "CAN FD messages require a session opened with CAN FD enabled"
+            )
+        aggregate_frequency = sum(
+            message.frequency_hz or 0
+            for message in messages
+            if message.enabled and message.mode is TransmissionMode.CYCLIC
+        )
+        if aggregate_frequency > self._tx_rate_limit_per_second:
+            raise InvalidRequestError(
+                "Aggregate cyclic frequency exceeds the configured transmission "
+                f"limit of {self._tx_rate_limit_per_second} frames/s"
             )
         self._transmission_plan = TransmissionPlan(
             session_id=self.id,

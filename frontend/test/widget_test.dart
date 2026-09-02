@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/fakes.dart';
 
 void main() {
-  testWidgets('selects interface and manages a filtered standard ID', (
+  testWidgets('selects whitelist and blacklist with a standard ID', (
     tester,
   ) async {
     final api = FakeCanApi();
@@ -22,15 +22,20 @@ void main() {
     expect(find.byKey(const Key('interface-selector')), findsOneWidget);
     expect(find.textContaining('vcan0'), findsWidgets);
 
-    await tester.tap(find.text('IDs selecionados'));
+    expect(find.text('BLACKLIST'), findsOneWidget);
+    await tester.tap(find.text('WHITELIST'));
     await tester.pump();
     await tester.enterText(find.byKey(const Key('filter-id-input')), '123');
     await tester.tap(find.byKey(const Key('add-filter')));
     await tester.pump();
 
     expect(find.text('0x123 STD'), findsOneWidget);
-    expect(controller.filterMode, CanFilterMode.filtered);
+    expect(controller.filterMode, CanFilterMode.whitelist);
     expect(controller.filterIds.single.canId, 0x123);
+
+    await tester.tap(find.text('BLACKLIST'));
+    await tester.pump();
+    expect(controller.filterMode, CanFilterMode.blacklist);
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
@@ -70,12 +75,19 @@ void main() {
       find.byKey(const Key('tx-payload-input')),
       '01 0A FF',
     );
+    await tester.ensureVisible(find.byKey(const Key('tx-mode-selector')));
+    await tester.tap(find.byKey(const Key('tx-mode-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cíclico').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('tx-rate-input')), '200');
     await tester.drag(find.byType(ListView), const Offset(0, -700));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-transmission-message')));
     await tester.pumpAndSettle();
 
     expect(find.text('0x123'), findsOneWidget);
+    expect(controller.transmissionMessages.single.periodMs, 5);
     await tester.drag(find.byType(ListView), const Offset(0, 1000));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('send-once')));

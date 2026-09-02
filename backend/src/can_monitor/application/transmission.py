@@ -16,6 +16,9 @@ from can_monitor.domain.crc import CrcInsertion, insert_crc
 from can_monitor.domain.models import SendFrameCommand
 from can_monitor.errors import ConflictError, InvalidRequestError
 
+MAX_MESSAGE_FREQUENCY_HZ = 200.0
+MIN_CYCLIC_PERIOD_MS = 1000.0 / MAX_MESSAGE_FREQUENCY_HZ
+
 
 class TransmissionMode(StrEnum):
     SINGLE = "single"
@@ -70,6 +73,8 @@ class MessageTelemetry:
     last_error: str | None = None
     last_crc: int | None = None
     state: str = "stopped"
+    first_transmission_monotonic: float | None = None
+    last_transmission_monotonic: float | None = None
 
 
 Sender = Callable[[SendFrameCommand], Awaitable[None]]
@@ -90,6 +95,18 @@ class TransmissionPlan:
             raise InvalidRequestError("At least one transmission message is required")
         if not any(message.enabled for message in messages):
             raise InvalidRequestError("At least one transmission message must be enabled")
+        if any(
+            message.mode is TransmissionMode.CYCLIC
+            and (
+                message.period_ms is None
+                or message.period_ms < MIN_CYCLIC_PERIOD_MS
+            )
+            for message in messages
+        ):
+            raise InvalidRequestError(
+                "Cyclic message frequency must not exceed "
+                f"{MAX_MESSAGE_FREQUENCY_HZ:g} Hz"
+            )
         self.plan_id = str(uuid.uuid4())
         self.session_id = session_id
         self.interface = interface
@@ -264,6 +281,10 @@ class TransmissionPlan:
                 command, crc_value = message.command()
                 await self._sender(command)
                 telemetry.sent_frames += 1
+                sent_at = self._monotonic()
+                if telemetry.first_transmission_monotonic is None:
+                    telemetry.first_transmission_monotonic = sent_at
+                telemetry.last_transmission_monotonic = sent_at
                 telemetry.last_transmission = datetime.now(timezone.utc)
                 telemetry.last_error = None
                 telemetry.last_crc = crc_value
@@ -314,6 +335,16 @@ class TransmissionPlan:
 
     def _message_snapshot(self, message: TransmissionMessage) -> dict[str, object]:
         telemetry = self._telemetry[message.message_id]
+        first = telemetry.first_transmission_monotonic
+        last = telemetry.last_transmission_monotonic
+        effective_frequency = (
+            (telemetry.sent_frames - 1) / (last - first)
+            if first is not None
+            and last is not None
+            and last > first
+            and telemetry.sent_frames > 1
+            else None
+        )
         return {
             "message_id": message.message_id,
             "enabled": message.enabled,
@@ -323,6 +354,8 @@ class TransmissionPlan:
             "mode": message.mode.value,
             "period_ms": message.period_ms,
             "frequency_hz": message.frequency_hz,
+            "configured_frequency_hz": message.frequency_hz,
+            "effective_frequency_hz": effective_frequency,
             "crc_enabled": message.crc is not None,
             "state": telemetry.state,
             "sent_frames": telemetry.sent_frames,

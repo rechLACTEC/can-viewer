@@ -56,14 +56,19 @@ Exemplo de conexão:
 {
   "interface": "vcan0",
   "fd": false,
-  "filter": {"mode": "filtered", "ids": [
+  "filter": {"mode": "whitelist", "ids": [
     {"can_id": 291, "is_extended_id": false}
   ]}
 }
 ```
 
-Em `all`, `ids` deve ser vazio; em `filtered`, deve conter pelo menos um ID. IDs
-standard e extended são distintos e os filtros são encaminhados ao SocketCAN.
+Em `all`, `ids` deve ser vazio. Em `whitelist`, somente os IDs listados passam;
+em `blacklist`, todos passam exceto os IDs listados. Listas vazias são válidas
+(`whitelist` bloqueia tudo e `blacklist` libera tudo). IDs
+standard e extended são distintos. A whitelist também é encaminhada ao SocketCAN;
+a regra final de todos os modos é aplicada de forma centralizada na sessão. Para
+blacklist, o socket recebe todos os frames e a exclusão ocorre antes de estatísticas,
+gravação, ring buffer e WebSocket.
 
 ## Segurança de transmissão
 
@@ -83,11 +88,20 @@ separadamente, mas todas as interfaces respeitam o rate limit. `bus.send()` conf
 submissão ao driver, não recepção por outro nó. O eco local é transmitido no stream
 como direção `tx` quando suportado.
 
+Mensagens cíclicas aceitam de 1/60 Hz (60 s) até 200 Hz (5 ms). O scheduler usa
+relógio monotônico e deadlines absolutos em uma única tarefa por plano, pula ciclos
+perdidos sem rajadas de recuperação e reinicia a referência após `resume`. O limite
+agregado configurável é validado antes do plano e aplicado em runtime por token
+bucket monotônico; por padrão, permite até 1000 frames/s somando mensagens e envios
+manuais. A telemetria separa frequência configurada, frequência efetiva, erros e
+deadlines perdidos. Python/Linux comum não oferece garantia hard real-time.
+
 ## Configuração
 
 - `CAN_MONITOR_TX_ENABLED=false`
 - `CAN_MONITOR_VIRTUAL_TX_ENABLED=true`
-- `CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND=10`
+- `CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND=1000` (limite agregado; cada mensagem
+  cíclica aceita no máximo 200 Hz)
 - `CAN_MONITOR_ACQUISITION_QUEUE_SIZE=8192`
 - `CAN_MONITOR_TRACE_BUFFER_SIZE=10000`
 - `CAN_MONITOR_CLIENT_QUEUE_SIZE=2048`
@@ -120,9 +134,10 @@ Em Docker, monte um volume persistente em `/data/recordings`, por exemplo
 `./recordings:/data/recordings`. O repositório não possui atualmente um Compose
 executável; por isso nenhuma configuração de rede ou capability foi criada ou alterada.
 
-A fonte é o fluxo normalizado da sessão antes do ring buffer e do WebSocket. Os filtros
-configurados são encaminhados ao SocketCAN/python-can e podem impedir que frames cheguem
-ao processo; a gravação não abre um segundo socket para contornar essa limitação.
+A fonte é o fluxo normalizado da sessão antes do ring buffer e do WebSocket, mas após
+a regra final de filtro da sessão. A whitelist pode impedir no SocketCAN que frames
+cheguem ao processo; a blacklist é aplicada na sessão. A gravação não abre um segundo
+socket para contornar filtros, preservando a mesma semântica do monitor.
 
 ## Timestamps e perda
 

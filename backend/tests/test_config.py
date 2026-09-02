@@ -31,6 +31,13 @@ def test_physical_tx_defaults_to_disabled_and_reads_enabled_environment(
     assert Settings(tx_enabled=True).tx_enabled is True
 
 
+def test_default_aggregate_tx_limit_supports_multiple_200_hz_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND", raising=False)
+    assert Settings.from_env().tx_rate_limit_per_second == 1000
+
+
 def test_cors_origins_must_be_absolute_http_origins() -> None:
     with pytest.raises(ValueError, match="Invalid CORS origin"):
         Settings(cors_origins=("*",))

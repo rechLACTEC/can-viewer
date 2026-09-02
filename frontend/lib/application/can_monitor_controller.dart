@@ -104,8 +104,7 @@ class CanMonitorController extends ChangeNotifier {
   bool get canConnect =>
       selectedInterface != null &&
       connectionState != MonitorConnectionState.connecting &&
-      _session == null &&
-      (filterMode == CanFilterMode.all || filterIds.isNotEmpty);
+      _session == null;
 
   Future<void> loadInterfaces() async {
     loadingInterfaces = true;
@@ -145,15 +144,15 @@ class CanMonitorController extends ChangeNotifier {
   }
 
   Future<void> setFilterMode(CanFilterMode value) async {
-    await _applyFilters(
-      value,
-      value == CanFilterMode.all ? const [] : filterIds,
-    );
+    await _applyFilters(value, filterIds);
   }
 
   Future<void> addFilter(CanFilterId value) async {
     if (filterIds.contains(value)) return;
-    await _applyFilters(CanFilterMode.filtered, [...filterIds, value]);
+    final nextMode = filterMode == CanFilterMode.all
+        ? CanFilterMode.whitelist
+        : filterMode;
+    await _applyFilters(nextMode, [...filterIds, value]);
   }
 
   Future<void> removeFilter(CanFilterId value) async {
@@ -167,15 +166,10 @@ class CanMonitorController extends ChangeNotifier {
     CanFilterMode nextMode,
     List<CanFilterId> nextIds,
   ) async {
-    if (nextMode == CanFilterMode.filtered && nextIds.isEmpty) {
-      lastError = 'O modo filtrado exige ao menos um CAN ID.';
-      notifyListeners();
-      return;
-    }
     final session = _session;
     if (session == null) {
       filterMode = nextMode;
-      filterIds = nextMode == CanFilterMode.all ? const [] : List.of(nextIds);
+      filterIds = List.of(nextIds);
       lastError = null;
       notifyListeners();
       return;
@@ -189,7 +183,7 @@ class CanMonitorController extends ChangeNotifier {
         ids: nextMode == CanFilterMode.all ? const [] : nextIds,
       );
       filterMode = nextMode;
-      filterIds = nextMode == CanFilterMode.all ? const [] : List.of(nextIds);
+      filterIds = List.of(nextIds);
       appliedFilterRevision = updated.filterRevision;
       lastError = null;
     } catch (error) {

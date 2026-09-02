@@ -59,7 +59,7 @@ def test_interfaces_session_filters_timing_and_disconnect() -> None:
         updated = client.put(
             f"/api/v1/can/sessions/{session_id}/filters",
             json={
-                "mode": "filtered",
+                "mode": "whitelist",
                 "ids": [
                     {"can_id": 0x123, "is_extended_id": False},
                     {"can_id": 0x123, "is_extended_id": True},
@@ -68,7 +68,14 @@ def test_interfaces_session_filters_timing_and_disconnect() -> None:
         )
         assert updated.status_code == 200
         assert updated.json()["filter_revision"] == 2
+        assert updated.json()["filter"]["mode"] == "whitelist"
         assert len(adapters[0].filters) == 1
+        blacklist = client.put(
+            f"/api/v1/can/sessions/{session_id}/filters",
+            json={"mode": "blacklist", "ids": []},
+        )
+        assert blacklist.status_code == 200
+        assert blacklist.json()["filter"]["mode"] == "blacklist"
         assert client.get(f"/api/v1/can/sessions/{session_id}/timing").json() == {
             "statistics": []
         }
@@ -98,7 +105,7 @@ def test_validation_conflict_not_found_and_problem_json() -> None:
         assert conflict.status_code == 409
         invalid = client.put(
             "/api/v1/can/sessions/not-a-session/filters",
-            json={"mode": "filtered", "ids": []},
+            json={"mode": "all", "ids": [{"can_id": 0x123}]},
         )
         assert invalid.status_code == 422
         assert invalid.json()["code"] == "validation_error"

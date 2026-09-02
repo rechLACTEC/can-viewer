@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 enum CanDirection { rx, tx }
 
-enum CanFilterMode { all, filtered }
+enum CanFilterMode { all, whitelist, blacklist }
 
 enum CanRecordingState { idle, recording, paused, finalizing, completed, error }
 
@@ -344,6 +344,8 @@ class CanTransmissionMessageStatus {
     required this.sentFrames,
     required this.sendErrors,
     required this.deadlineMisses,
+    this.configuredFrequencyHz,
+    this.effectiveFrequencyHz,
     this.lastTransmission,
     this.lastError,
   });
@@ -355,6 +357,10 @@ class CanTransmissionMessageStatus {
         sentFrames: _requiredInt(json, 'sent_frames'),
         sendErrors: _requiredInt(json, 'send_errors'),
         deadlineMisses: _requiredInt(json, 'deadline_misses'),
+        configuredFrequencyHz: (json['configured_frequency_hz'] as num?)
+            ?.toDouble(),
+        effectiveFrequencyHz: (json['effective_frequency_hz'] as num?)
+            ?.toDouble(),
         lastTransmission: _optionalDateTime(json['last_transmission']),
         lastError: json['last_error'] as String?,
       );
@@ -364,6 +370,8 @@ class CanTransmissionMessageStatus {
   final int sentFrames;
   final int sendErrors;
   final int deadlineMisses;
+  final double? configuredFrequencyHz;
+  final double? effectiveFrequencyHz;
   final DateTime? lastTransmission;
   final String? lastError;
 }

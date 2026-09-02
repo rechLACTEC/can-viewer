@@ -76,7 +76,7 @@ void main() {
   });
 
   test(
-    'publishes filters only after successful PUT and blocks empty',
+    'publishes whitelist and blacklist changes only after successful PUT',
     () async {
       final api = FakeCanApi();
       final controller = CanMonitorController(
@@ -95,21 +95,38 @@ void main() {
       expect(controller.filterIds, isEmpty);
       expect(controller.lastError, 'filter rejected');
 
-      await controller.setFilterMode(CanFilterMode.filtered);
+      await controller.setFilterMode(CanFilterMode.whitelist);
       expect(controller.filterMode, CanFilterMode.all);
-      expect(controller.lastError, contains('ao menos um'));
+      expect(controller.lastError, 'filter rejected');
 
       api.failFilterUpdate = false;
       await controller.addFilter(
         const CanFilterId(canId: 0x123, isExtended: false),
       );
-      expect(controller.filterMode, CanFilterMode.filtered);
+      expect(controller.filterMode, CanFilterMode.whitelist);
       expect(controller.filterIds, hasLength(1));
       expect(controller.appliedFilterRevision, 2);
 
-      await controller.removeFilter(controller.filterIds.single);
+      await controller.setFilterMode(CanFilterMode.blacklist);
+      expect(controller.filterMode, CanFilterMode.blacklist);
       expect(controller.filterIds, hasLength(1));
-      expect(controller.lastError, contains('ao menos um'));
+      expect(api.lastFilterMode, CanFilterMode.blacklist);
+
+      await controller.addFilter(
+        const CanFilterId(canId: 0x123, isExtended: true),
+      );
+      expect(controller.filterIds, hasLength(2));
+      await controller.removeFilter(
+        const CanFilterId(canId: 0x123, isExtended: false),
+      );
+      expect(controller.filterIds, hasLength(1));
+      await controller.removeFilter(controller.filterIds.single);
+      expect(controller.filterIds, isEmpty);
+      expect(controller.filterMode, CanFilterMode.blacklist);
+
+      await controller.setFilterMode(CanFilterMode.whitelist);
+      expect(controller.filterMode, CanFilterMode.whitelist);
+      expect(controller.filterIds, isEmpty);
     },
   );
 

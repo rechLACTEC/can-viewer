@@ -13,13 +13,15 @@ from can_monitor.domain.models import (
 from tests.fakes import FakeAdapter
 
 
-def _frame(sequence: int) -> CanFrame:
+def _frame(
+    sequence: int, *, can_id: int = 0x123, is_extended_id: bool = False
+) -> CanFrame:
     return CanFrame(
         capture_timestamp_ns=1_000_000 - sequence,
         ingress_monotonic_ns=sequence,
         interface="vcan0",
-        can_id=0x123,
-        is_extended_id=False,
+        can_id=can_id,
+        is_extended_id=is_extended_id,
         is_fd=False,
         dlc=1,
         data=b"\x01",
@@ -115,7 +117,7 @@ def test_filter_revision_has_a_consistent_application_boundary() -> None:
         update = asyncio.create_task(
             session.update_filters(
                 FilterConfig(
-                    FilterMode.FILTERED,
+                    FilterMode.WHITELIST,
                     (CanIdFilter(0x123, False),),
                 )
             )
@@ -126,6 +128,46 @@ def test_filter_revision_has_a_consistent_application_boundary() -> None:
         await update
         during = await asyncio.wait_for(subscription.queue.get(), timeout=1)
         assert during is not None and during.filter_revision == 2
+        await session.close()
+
+    asyncio.run(scenario())
+
+
+def test_blacklist_blocks_only_exact_ids_and_can_change_during_acquisition() -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        session = _session(adapter)
+        await session.connect()
+        subscription = session.subscribe()
+
+        await session.update_filters(
+            FilterConfig(
+                FilterMode.BLACKLIST,
+                (CanIdFilter(0x123, False), CanIdFilter(0x401, True)),
+            )
+        )
+        await adapter.queue.put(_frame(1, can_id=0x123))
+        await adapter.queue.put(_frame(2, can_id=0x123, is_extended_id=True))
+        await adapter.queue.put(_frame(3, can_id=0x401, is_extended_id=True))
+        await adapter.queue.put(_frame(4, can_id=0x456))
+
+        first = await asyncio.wait_for(subscription.queue.get(), timeout=1)
+        second = await asyncio.wait_for(subscription.queue.get(), timeout=1)
+        assert first is not None
+        assert second is not None
+        assert (first.frame.can_id, first.frame.is_extended_id) == (0x123, True)
+        assert (second.frame.can_id, second.frame.is_extended_id) == (0x456, False)
+
+        await session.update_filters(
+            FilterConfig(
+                FilterMode.WHITELIST,
+                (CanIdFilter(0x123, False),),
+            )
+        )
+        await adapter.queue.put(_frame(5, can_id=0x456))
+        await adapter.queue.put(_frame(6, can_id=0x123))
+        whitelisted = await asyncio.wait_for(subscription.queue.get(), timeout=1)
+        assert whitelisted is not None and whitelisted.frame.can_id == 0x123
         await session.close()
 
     asyncio.run(scenario())

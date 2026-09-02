@@ -396,6 +396,8 @@ const _jsonHeaders = {
 };
 
 Map<String, Object> _filterJson(CanFilterMode mode, List<CanFilterId> ids) => {
-  'mode': mode == CanFilterMode.all ? 'all' : 'filtered',
-  'ids': ids.map((id) => id.toJson()).toList(growable: false),
+  'mode': mode.name,
+  'ids': (mode == CanFilterMode.all ? const <CanFilterId>[] : ids)
+      .map((id) => id.toJson())
+      .toList(growable: false),
 };

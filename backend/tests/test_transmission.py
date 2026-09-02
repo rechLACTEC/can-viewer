@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from can_monitor.api.app import create_app
+from can_monitor.api.schemas import TransmissionMessageRequest
 from can_monitor.application.transmission import (
     TransmissionMessage,
     TransmissionMode,
@@ -217,6 +218,63 @@ def test_absolute_deadlines_do_not_accumulate_drift_and_skip_missed_periods() ->
     assert misses == 4
 
 
+@pytest.mark.parametrize("frequency_hz", [1, 10, 20, 50, 100, 200])
+def test_supported_frequencies_convert_to_the_expected_period(
+    frequency_hz: int,
+) -> None:
+    request = TransmissionMessageRequest(
+        message_id=f"frequency-{frequency_hz}",
+        can_id=0x123,
+        data_hex="01",
+        mode="cyclic",
+        period_ms=1000 / frequency_hz,
+    )
+    message = request.to_domain()
+    assert message.period_ms == pytest.approx(1000 / frequency_hz)
+    assert message.frequency_hz == pytest.approx(frequency_hz)
+
+
+def test_frequency_above_200_hz_is_rejected() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 5"):
+        TransmissionMessageRequest(
+            message_id="too-fast",
+            can_id=0x123,
+            data_hex="01",
+            mode="cyclic",
+            period_ms=4.99,
+        )
+
+
+def test_200_hz_scheduler_has_bounded_drift_and_reports_effective_frequency() -> None:
+    async def scenario() -> None:
+        sent_at: list[float] = []
+
+        async def sender(_: SendFrameCommand) -> None:
+            sent_at.append(time.monotonic())
+
+        plan = TransmissionPlan(
+            session_id="session-200hz",
+            interface="vcan0",
+            messages=(_message("fast", period_ms=5),),
+            sender=sender,
+        )
+        plan.start()
+        await asyncio.sleep(0.16)
+        await plan.stop()
+
+        assert 20 <= len(sent_at) <= 45
+        elapsed = sent_at[-1] - sent_at[0]
+        effective = (len(sent_at) - 1) / elapsed
+        assert effective == pytest.approx(200, rel=0.35)
+        telemetry = plan.snapshot()["messages"][0]
+        assert telemetry["configured_frequency_hz"] == pytest.approx(200)
+        assert telemetry["effective_frequency_hz"] == pytest.approx(
+            effective, rel=0.01
+        )
+
+    asyncio.run(scenario())
+
+
 def test_invalid_controls_are_rejected() -> None:
     async def scenario() -> None:
         async def sender(_: SendFrameCommand) -> None:
@@ -316,6 +374,38 @@ def test_transmission_api_configuration_preview_lifecycle_and_stop_all() -> None
         assert once.status_code == 202
         assert once.json()["sent_frames"] == 2
         assert len(adapters[0].sent) >= 2
+
+
+def test_aggregate_limit_is_distinct_from_per_message_200_hz_limit() -> None:
+    app = create_app(
+        Settings(cors_origins=(), tx_rate_limit_per_second=1000),
+        adapter_factory=FakeAdapter,
+        discoverer=FakeDiscoverer(
+            [CanInterfaceInfo("vcan0", "vcan", bitrate=500_000)]
+        ),
+    )
+    with TestClient(app) as client:
+        session = client.post(
+            "/api/v1/can/sessions",
+            json={"interface": "vcan0", "filter": {"mode": "all", "ids": []}},
+        ).json()
+        path = f"/api/v1/can/sessions/{session['id']}/transmissions"
+        base_message = _request_messages()[0]
+        four_at_200 = [
+            {**base_message, "message_id": f"message-{index}", "period_ms": 5}
+            for index in range(4)
+        ]
+        accepted = client.post(path, json={"messages": four_at_200})
+        assert accepted.status_code == 201
+        assert accepted.json()["estimated_bus_load_percent"] is not None
+
+        six_at_200 = [
+            {**base_message, "message_id": f"overload-{index}", "period_ms": 5}
+            for index in range(6)
+        ]
+        rejected = client.post(path, json={"messages": six_at_200})
+        assert rejected.status_code == 400
+        assert "Aggregate cyclic frequency" in rejected.json()["detail"]
 
 
 def test_shutdown_stops_cyclic_scheduler() -> None:

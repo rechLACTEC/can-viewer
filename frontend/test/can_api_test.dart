@@ -19,7 +19,7 @@ void main() {
       }
       if (request.url.path.endsWith('/filters')) {
         expect(body['filter'], isNull);
-        expect(body['mode'], 'filtered');
+        expect(body['mode'], 'whitelist');
         return _sessionResponse(filterRevision: 2, fd: true);
       }
       if (request.url.path.endsWith('/frames')) {
@@ -40,7 +40,7 @@ void main() {
     );
     final updated = await api.updateFilters(
       session.id,
-      mode: CanFilterMode.filtered,
+      mode: CanFilterMode.whitelist,
       ids: const [CanFilterId(canId: 0x123, isExtended: false)],
     );
     await api.sendFrame(
@@ -91,6 +91,32 @@ void main() {
       api.close();
     },
   );
+
+  test('serializes blacklist with exact standard and extended IDs', () async {
+    final client = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, Object?>;
+      expect(body['mode'], 'blacklist');
+      expect(body['ids'], [
+        {'can_id': 0x123, 'is_extended_id': false},
+        {'can_id': 0x123, 'is_extended_id': true},
+      ]);
+      return _sessionResponse(filterRevision: 3);
+    });
+    final api = HttpCanApi(
+      config: AppConfig(apiBaseUri: Uri.parse('http://localhost:8000')),
+      client: client,
+    );
+
+    await api.updateFilters(
+      'session-1',
+      mode: CanFilterMode.blacklist,
+      ids: const [
+        CanFilterId(canId: 0x123, isExtended: false),
+        CanFilterId(canId: 0x123, isExtended: true),
+      ],
+    );
+    api.close();
+  });
 
   test('reads and updates the physical TX runtime state', () async {
     var enabled = false;
@@ -178,14 +204,13 @@ void main() {
 
     expect(status.messages, hasLength(2));
     expect(status.estimatedBusLoadPercent, 0.25);
+    expect(status.messages.first.configuredFrequencyHz, 200);
+    expect(status.messages.first.effectiveFrequencyHz, 198.5);
     api.close();
   });
 }
 
-http.Response _sessionResponse({
-  required int filterRevision,
-  required bool fd,
-}) {
+http.Response _sessionResponse({required int filterRevision, bool fd = false}) {
   return http.Response(
     jsonEncode({
       'id': 'session-1',
@@ -233,6 +258,8 @@ Map<String, Object?> _transmissionResponse() => {
         'sent_frames': 0,
         'send_errors': 0,
         'deadline_misses': 0,
+        'configured_frequency_hz': id == 'cyclic' ? 200.0 : null,
+        'effective_frequency_hz': id == 'cyclic' ? 198.5 : null,
         'last_transmission': null,
         'last_error': null,
       },

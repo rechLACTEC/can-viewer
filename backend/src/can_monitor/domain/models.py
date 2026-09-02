@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -13,7 +13,8 @@ class Direction(StrEnum):
 
 class FilterMode(StrEnum):
     ALL = "all"
-    FILTERED = "filtered"
+    WHITELIST = "whitelist"
+    BLACKLIST = "blacklist"
 
 
 class SessionState(StrEnum):
@@ -34,9 +35,17 @@ class CanIdFilter:
 class FilterConfig:
     mode: FilterMode
     ids: tuple[CanIdFilter, ...] = ()
+    _keys: frozenset[tuple[int, bool]] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_keys",
+            frozenset((item.can_id, item.is_extended_id) for item in self.ids),
+        )
 
     def as_python_can(self) -> list[dict[str, int | bool]] | None:
-        if self.mode is FilterMode.ALL:
+        if self.mode is not FilterMode.WHITELIST or not self.ids:
             return None
         return [
             {
@@ -46,6 +55,12 @@ class FilterConfig:
             }
             for item in self.ids
         ]
+
+    def allows(self, frame: CanFrame) -> bool:
+        if self.mode is FilterMode.ALL:
+            return True
+        listed = (frame.can_id, frame.is_extended_id) in self._keys
+        return listed if self.mode is FilterMode.WHITELIST else not listed
 
 
 @dataclass(frozen=True, slots=True)

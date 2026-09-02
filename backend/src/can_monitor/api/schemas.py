@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from can_monitor.application.transmission import (
+    MIN_CYCLIC_PERIOD_MS,
     TransmissionMessage,
     TransmissionMode,
 )
@@ -34,13 +35,11 @@ class FilterIdRequest(StrictModel):
 
 
 class FilterRequest(StrictModel):
-    mode: Literal["all", "filtered"] = "all"
+    mode: Literal["all", "whitelist", "blacklist"] = "all"
     ids: list[FilterIdRequest] = Field(default_factory=list, max_length=512)
 
     @model_validator(mode="after")
     def validate_semantics(self) -> "FilterRequest":
-        if self.mode == "filtered" and not self.ids:
-            raise ValueError("Filtered mode requires at least one CAN ID")
         if self.mode == "all" and self.ids:
             raise ValueError("ALL mode must not include CAN IDs")
         unique = {(item.can_id, item.is_extended_id) for item in self.ids}
@@ -144,7 +143,9 @@ class TransmissionMessageRequest(StrictModel):
     is_fd: bool = False
     data_hex: str = Field(default="", max_length=256)
     mode: Literal["single", "cyclic"] = "single"
-    period_ms: float | None = Field(default=None, ge=10, le=60_000)
+    period_ms: float | None = Field(
+        default=None, ge=MIN_CYCLIC_PERIOD_MS, le=60_000
+    )
     crc: CrcRequest | None = None
 
     @model_validator(mode="after")

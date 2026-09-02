@@ -27,7 +27,7 @@ def _frame(
 
 def test_exact_filters_keep_standard_and_extended_distinct() -> None:
     filters = FilterConfig(
-        FilterMode.FILTERED,
+        FilterMode.WHITELIST,
         (CanIdFilter(0x123, False), CanIdFilter(0x123, True)),
     ).as_python_can()
     assert filters == [
@@ -35,6 +35,44 @@ def test_exact_filters_keep_standard_and_extended_distinct() -> None:
         {"can_id": 0x123, "can_mask": 0x1FFFFFFF, "extended": True},
     ]
     assert FilterConfig(FilterMode.ALL).as_python_can() is None
+
+
+def test_all_whitelist_and_blacklist_share_exact_std_ext_matching() -> None:
+    standard = _frame(1)
+    extended_same_id = CanFrame(
+        capture_timestamp_ns=2,
+        ingress_monotonic_ns=2,
+        interface="vcan0",
+        can_id=0x123,
+        is_extended_id=True,
+        is_fd=False,
+        dlc=1,
+        data=b"\x02",
+        direction=Direction.RX,
+    )
+    other = CanFrame(
+        capture_timestamp_ns=3,
+        ingress_monotonic_ns=3,
+        interface="vcan0",
+        can_id=0x456,
+        is_extended_id=False,
+        is_fd=False,
+        dlc=1,
+        data=b"\x03",
+        direction=Direction.RX,
+    )
+    ids = (CanIdFilter(0x123, False),)
+
+    assert FilterConfig(FilterMode.ALL).allows(standard)
+    assert FilterConfig(FilterMode.WHITELIST, ids).allows(standard)
+    assert not FilterConfig(FilterMode.WHITELIST, ids).allows(extended_same_id)
+    assert not FilterConfig(FilterMode.WHITELIST, ids).allows(other)
+    assert not FilterConfig(FilterMode.BLACKLIST, ids).allows(standard)
+    assert FilterConfig(FilterMode.BLACKLIST, ids).allows(extended_same_id)
+    assert FilterConfig(FilterMode.BLACKLIST, ids).allows(other)
+    assert not FilterConfig(FilterMode.WHITELIST).allows(other)
+    assert FilterConfig(FilterMode.BLACKLIST).allows(other)
+    assert FilterConfig(FilterMode.BLACKLIST, ids).as_python_can() is None
 
 
 def test_online_timing_and_explicit_jitter_formula() -> None:

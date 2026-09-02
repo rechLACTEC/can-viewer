@@ -19,7 +19,7 @@ def _bool_env(name: str, default: bool) -> bool:
 class Settings:
     tx_enabled: bool = False
     virtual_tx_enabled: bool = True
-    tx_rate_limit_per_second: int = 10
+    tx_rate_limit_per_second: int = 1000
     acquisition_queue_size: int = 8192
     trace_buffer_size: int = 10_000
     client_queue_size: int = 2048
@@ -66,7 +66,7 @@ class Settings:
             tx_enabled=_bool_env("CAN_MONITOR_TX_ENABLED", False),
             virtual_tx_enabled=_bool_env("CAN_MONITOR_VIRTUAL_TX_ENABLED", True),
             tx_rate_limit_per_second=int(
-                os.getenv("CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND", "10")
+                os.getenv("CAN_MONITOR_TX_RATE_LIMIT_PER_SECOND", "1000")
             ),
             acquisition_queue_size=int(
                 os.getenv("CAN_MONITOR_ACQUISITION_QUEUE_SIZE", "8192")

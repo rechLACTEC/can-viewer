@@ -15,6 +15,8 @@ const _crcAlgorithms = [
   'CRC-32/ISO-HDLC',
   'CUSTOM',
 ];
+const _maxTransmissionFrequencyHz = 200.0;
+const _minTransmissionPeriodMs = 1000 / _maxTransmissionFrequencyHz;
 
 class TransmissionScreen extends StatefulWidget {
   const TransmissionScreen({super.key, required this.controller});
@@ -614,6 +616,10 @@ class _MessageRow extends StatelessWidget {
           Tooltip(
             message: [
               'Enviados ${status?.sentFrames ?? 0} · Erros ${status?.sendErrors ?? 0} · Misses ${status?.deadlineMisses ?? 0}',
+              if (status?.configuredFrequencyHz case final frequency?)
+                'Configurada: ${frequency.toStringAsFixed(2)} Hz',
+              if (status?.effectiveFrequencyHz case final frequency?)
+                'Efetiva: ${frequency.toStringAsFixed(2)} Hz',
               if (status?.lastTransmission case final timestamp?)
                 'Último envio: ${timestamp.toLocal()}',
               if (status?.lastError case final error?) 'Último erro: $error',
@@ -777,8 +783,8 @@ class _MessageEditorState extends State<_MessageEditor> {
     if (_mode == CanTransmissionMode.cyclic) {
       final rate = double.parse(_rate.text.replaceAll(',', '.'));
       period = _rateInHz ? 1000 / rate : rate;
-      if (period < 10 || period > 60000) {
-        _showError('Use período entre 10 e 60000 ms (máximo de 100 Hz).');
+      if (period < _minTransmissionPeriodMs || period > 60000) {
+        _showError('Use período entre 5 e 60000 ms (máximo de 200 Hz).');
         return null;
       }
     }
