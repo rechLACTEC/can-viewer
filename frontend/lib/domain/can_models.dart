@@ -286,6 +286,30 @@ class CanCrcConfig {
   };
 }
 
+class CanCounterConfig {
+  const CanCounterConfig({
+    required this.bitOffset,
+    required this.bitLength,
+    required this.initialValue,
+    required this.increment,
+  });
+
+  final int bitOffset;
+  final int bitLength;
+  final int initialValue;
+  final int increment;
+
+  int get maximumValue => (1 << bitLength) - 1;
+
+  Map<String, Object?> toJson() => {
+    'enabled': true,
+    'bit_offset': bitOffset,
+    'bit_length': bitLength,
+    'initial_value': initialValue,
+    'increment': increment,
+  };
+}
+
 class CanTransmissionMessageConfig {
   const CanTransmissionMessageConfig({
     required this.messageId,
@@ -297,6 +321,7 @@ class CanTransmissionMessageConfig {
     required this.mode,
     this.periodMs,
     this.crc,
+    this.counter,
   });
 
   final String messageId;
@@ -308,6 +333,7 @@ class CanTransmissionMessageConfig {
   final CanTransmissionMode mode;
   final double? periodMs;
   final CanCrcConfig? crc;
+  final CanCounterConfig? counter;
 
   double? get frequencyHz => periodMs == null ? null : 1000 / periodMs!;
 
@@ -322,6 +348,7 @@ class CanTransmissionMessageConfig {
         mode: mode,
         periodMs: periodMs,
         crc: crc,
+        counter: counter,
       );
 
   Map<String, Object?> toJson() => {
@@ -334,6 +361,7 @@ class CanTransmissionMessageConfig {
     'mode': mode.name,
     if (periodMs != null) 'period_ms': periodMs,
     if (crc != null) 'crc': crc!.toJson(),
+    if (counter != null) 'counter': counter!.toJson(),
   };
 }
 
@@ -426,15 +454,24 @@ class CanTransmissionStatus {
 }
 
 class CanTransmissionPreview {
-  const CanTransmissionPreview({required this.payloadHex, this.crcValue});
+  const CanTransmissionPreview({
+    required this.payloadHex,
+    this.payloadAfterCounterHex,
+    this.counterValue,
+    this.crcValue,
+  });
 
   factory CanTransmissionPreview.fromJson(Map<String, Object?> json) =>
       CanTransmissionPreview(
         payloadHex: _requiredString(json, 'payload_hex', allowEmpty: true),
+        payloadAfterCounterHex: json['payload_after_counter_hex'] as String?,
+        counterValue: (json['counter_value'] as num?)?.toInt(),
         crcValue: (json['crc_value'] as num?)?.toInt(),
       );
 
   final String payloadHex;
+  final String? payloadAfterCounterHex;
+  final int? counterValue;
   final int? crcValue;
 }
 

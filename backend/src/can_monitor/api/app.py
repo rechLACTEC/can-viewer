@@ -258,10 +258,12 @@ def create_app(
             raise InvalidRequestError(
                 "CAN FD messages require a session opened with CAN FD enabled"
             )
-        command, crc_value = message.command()
+        after_counter, final_payload, counter_value, crc_value = message.render()
         return {
             "message_id": message.message_id,
-            "payload_hex": command.data.hex().upper(),
+            "payload_after_counter_hex": after_counter.hex().upper(),
+            "payload_hex": final_payload.hex().upper(),
+            "counter_value": counter_value,
             "crc_value": crc_value,
         }
 

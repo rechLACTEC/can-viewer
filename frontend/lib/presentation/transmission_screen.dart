@@ -707,12 +707,17 @@ class _MessageEditorState extends State<_MessageEditor> {
   late final TextEditingController _polynomial;
   late final TextEditingController _initialValue;
   late final TextEditingController _xorOut;
+  late final TextEditingController _counterOffset;
+  late final TextEditingController _counterLength;
+  late final TextEditingController _counterInitial;
+  late final TextEditingController _counterIncrement;
   late bool _enabled;
   late bool _extended;
   late bool _fd;
   late CanTransmissionMode _mode;
   bool _rateInHz = true;
   late bool _crcEnabled;
+  late bool _counterEnabled;
   late String _algorithm;
   late int _width;
   late String _byteOrder;
@@ -725,6 +730,7 @@ class _MessageEditorState extends State<_MessageEditor> {
     super.initState();
     final value = widget.initial;
     final crc = value.crc;
+    final counter = value.counter;
     _id = TextEditingController(
       text: value.canId.toRadixString(16).toUpperCase(),
     );
@@ -740,11 +746,20 @@ class _MessageEditorState extends State<_MessageEditor> {
       text: _hex(crc?.initialValue ?? 0xFF),
     );
     _xorOut = TextEditingController(text: _hex(crc?.xorOut ?? 0xFF));
+    _counterOffset = TextEditingController(text: '${counter?.bitOffset ?? 0}');
+    _counterLength = TextEditingController(text: '${counter?.bitLength ?? 4}');
+    _counterInitial = TextEditingController(
+      text: '${counter?.initialValue ?? 0}',
+    );
+    _counterIncrement = TextEditingController(
+      text: '${counter?.increment ?? 1}',
+    );
     _enabled = value.enabled;
     _extended = value.isExtended;
     _fd = value.isFd;
     _mode = value.mode;
     _crcEnabled = crc != null;
+    _counterEnabled = counter != null;
     _algorithm = crc?.algorithm ?? _crcAlgorithms.first;
     _width = crc?.width ?? 8;
     _byteOrder = crc?.byteOrder ?? 'big';
@@ -764,6 +779,10 @@ class _MessageEditorState extends State<_MessageEditor> {
       _polynomial,
       _initialValue,
       _xorOut,
+      _counterOffset,
+      _counterLength,
+      _counterInitial,
+      _counterIncrement,
     ]) {
       item.dispose();
     }
@@ -821,6 +840,47 @@ class _MessageEditorState extends State<_MessageEditor> {
         return null;
       }
     }
+    CanCounterConfig? counter;
+    if (_counterEnabled) {
+      final offset = int.parse(_counterOffset.text);
+      final length = int.parse(_counterLength.text);
+      final initial = int.parse(_counterInitial.text);
+      final increment = int.parse(_counterIncrement.text);
+      if (length < 1 || length > 8) {
+        _showError('O contador deve ter entre 1 e 8 bits.');
+        return null;
+      }
+      if (offset + length > bytes.length * 8) {
+        _showError('O campo do contador está fora do payload.');
+        return null;
+      }
+      final maximum = (1 << length) - 1;
+      if (initial > maximum) {
+        _showError('O valor inicial excede o máximo $maximum.');
+        return null;
+      }
+      if (crc != null) {
+        final crcWidth = _algorithm == 'CUSTOM'
+            ? _width
+            : _algorithm.startsWith('CRC-32')
+            ? 32
+            : _algorithm.startsWith('CRC-16')
+            ? 16
+            : 8;
+        final crcStart = crc.position * 8;
+        final crcEnd = crcStart + crcWidth;
+        if (offset < crcEnd && crcStart < offset + length) {
+          _showError('O contador sobrepõe o campo de saída do CRC.');
+          return null;
+        }
+      }
+      counter = CanCounterConfig(
+        bitOffset: offset,
+        bitLength: length,
+        initialValue: initial,
+        increment: increment,
+      );
+    }
     return CanTransmissionMessageConfig(
       messageId: widget.initial.messageId,
       enabled: _enabled,
@@ -831,6 +891,7 @@ class _MessageEditorState extends State<_MessageEditor> {
       mode: _mode,
       periodMs: period,
       crc: crc,
+      counter: counter,
     );
   }
 
@@ -1031,6 +1092,21 @@ class _MessageEditorState extends State<_MessageEditor> {
                     ),
                     const Divider(height: 30),
                     SwitchListTile(
+                      key: const Key('counter-enabled'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Contador automático'),
+                      subtitle: const Text(
+                        'Bit 0 = LSB do primeiro byte; avança após cada envio bem-sucedido.',
+                      ),
+                      value: _counterEnabled,
+                      onChanged: (value) => setState(() {
+                        _counterEnabled = value;
+                        _preview = null;
+                      }),
+                    ),
+                    if (_counterEnabled) ..._counterFields(),
+                    const Divider(height: 30),
+                    SwitchListTile(
                       key: const Key('crc-enabled'),
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Calcular CRC automaticamente'),
@@ -1068,6 +1144,97 @@ class _MessageEditorState extends State<_MessageEditor> {
       ),
     ),
   );
+
+  List<Widget> _counterFields() {
+    final offset = int.tryParse(_counterOffset.text) ?? 0;
+    final length = int.tryParse(_counterLength.text) ?? 4;
+    final safeLength = length.clamp(1, 8);
+    final maximum = (1 << safeLength) - 1;
+    return [
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = constraints.maxWidth >= 680 ? 4 : 2;
+          final fieldWidth =
+              (constraints.maxWidth - (columns - 1) * 8) / columns;
+          return Wrap(
+            spacing: 8,
+            runSpacing: 10,
+            children: [
+              SizedBox(
+                width: fieldWidth,
+                child: _integerField('Bit inicial', _counterOffset),
+              ),
+              SizedBox(
+                width: fieldWidth,
+                child: TextFormField(
+                  key: const Key('counter-bit-length'),
+                  controller: _counterLength,
+                  decoration: const InputDecoration(
+                    labelText: 'Tamanho (bits)',
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator: (value) {
+                    final parsed = int.tryParse(value ?? '');
+                    return parsed == null || parsed < 1 || parsed > 8
+                        ? 'Use de 1 a 8.'
+                        : null;
+                  },
+                  onChanged: (_) => setState(() => _preview = null),
+                ),
+              ),
+              SizedBox(
+                width: fieldWidth,
+                child: _integerField('Valor inicial', _counterInitial),
+              ),
+              SizedBox(
+                width: fieldWidth,
+                child: TextFormField(
+                  key: const Key('counter-increment'),
+                  controller: _counterIncrement,
+                  decoration: const InputDecoration(labelText: 'Incremento'),
+                  keyboardType: TextInputType.number,
+                  validator: (value) {
+                    final parsed = int.tryParse(value ?? '');
+                    return parsed == null || parsed <= 0
+                        ? 'Use um inteiro positivo.'
+                        : null;
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'Range: bits $offset..${offset + length - 1}  •  '
+        'Valor máximo: $maximum (${_hex(maximum)})',
+      ),
+      const SizedBox(height: 10),
+      OutlinedButton.icon(
+        key: const Key('preview-counter'),
+        onPressed: widget.controller.isConnected ? _updatePreview : null,
+        icon: const Icon(Icons.preview_outlined),
+        label: const Text('Atualizar prévia'),
+      ),
+      if (_preview case final preview?) ...[
+        const SizedBox(height: 10),
+        Container(
+          key: const Key('counter-preview'),
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          color: Colors.black26,
+          child: Text(
+            'Payload base: ${_spacedHex(_payload.text)}\n'
+            'Counter = ${preview.counterValue ?? int.tryParse(_counterInitial.text) ?? 0}\n'
+            'Payload após contador: ${_spacedHex(preview.payloadAfterCounterHex ?? preview.payloadHex)}\n'
+            'Payload final: ${_spacedHex(preview.payloadHex)}',
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        ),
+      ],
+    ];
+  }
 
   List<Widget> _crcFields() => [
     DropdownButtonFormField<String>(

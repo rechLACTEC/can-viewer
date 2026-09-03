@@ -13,6 +13,7 @@ from can_monitor.application.transmission import (
     TransmissionMode,
 )
 from can_monitor.domain.crc import CRC_PRESETS, ByteOrder, CrcInsertion, CrcParameters
+from can_monitor.domain.counter import CounterConfig
 from can_monitor.domain.models import CanIdFilter, FilterConfig, FilterMode
 from can_monitor.domain.validation import parse_hex_payload, validate_can_id
 
@@ -130,6 +131,24 @@ class CrcRequest(StrictModel):
         )
 
 
+class CounterRequest(StrictModel):
+    enabled: bool = True
+    bit_offset: int = Field(ge=0)
+    bit_length: int = Field(ge=1, le=8)
+    initial_value: int = Field(default=0, ge=0)
+    increment: int = Field(default=1, gt=0)
+
+    def to_domain(self) -> CounterConfig | None:
+        if not self.enabled:
+            return None
+        return CounterConfig(
+            bit_offset=self.bit_offset,
+            bit_length=self.bit_length,
+            initial_value=self.initial_value,
+            increment=self.increment,
+        )
+
+
 class TransmissionMessageRequest(StrictModel):
     message_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -147,6 +166,7 @@ class TransmissionMessageRequest(StrictModel):
         default=None, ge=MIN_CYCLIC_PERIOD_MS, le=60_000
     )
     crc: CrcRequest | None = None
+    counter: CounterRequest | None = None
 
     @model_validator(mode="after")
     def validate_message(self) -> "TransmissionMessageRequest":
@@ -160,6 +180,18 @@ class TransmissionMessageRequest(StrictModel):
             from can_monitor.domain.crc import insert_crc
 
             insert_crc(payload, self.crc.to_domain())
+        TransmissionMessage(
+            message_id=self.message_id,
+            enabled=self.enabled,
+            can_id=self.can_id,
+            is_extended_id=self.is_extended_id,
+            is_fd=self.is_fd,
+            payload=payload,
+            mode=TransmissionMode(self.mode),
+            period_ms=self.period_ms,
+            crc=self.crc.to_domain() if self.crc else None,
+            counter=self.counter.to_domain() if self.counter else None,
+        )
         return self
 
     def to_domain(self) -> TransmissionMessage:
@@ -173,6 +205,7 @@ class TransmissionMessageRequest(StrictModel):
             mode=TransmissionMode(self.mode),
             period_ms=self.period_ms,
             crc=self.crc.to_domain() if self.crc else None,
+            counter=self.counter.to_domain() if self.counter else None,
         )
 
 

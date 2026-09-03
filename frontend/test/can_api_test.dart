@@ -139,7 +139,7 @@ void main() {
     api.close();
   });
 
-  test('serializes multi-message transmission and custom CRC', () async {
+  test('serializes transmission counter and custom CRC', () async {
     final client = MockClient((request) async {
       expect(request.url.path, '/api/v1/can/sessions/session-1/transmissions');
       final body = jsonDecode(request.body) as Map<String, Object?>;
@@ -148,6 +148,13 @@ void main() {
       final cyclic = messages.first as Map<String, Object?>;
       expect(cyclic['mode'], 'cyclic');
       expect(cyclic['period_ms'], 50.0);
+      expect(cyclic['counter'], {
+        'enabled': true,
+        'bit_offset': 4,
+        'bit_length': 4,
+        'initial_value': 2,
+        'increment': 3,
+      });
       expect(cyclic['crc'], {
         'algorithm': 'CUSTOM',
         'range_start': 0,
@@ -178,6 +185,12 @@ void main() {
         dataHex: '01 02 03 00',
         mode: CanTransmissionMode.cyclic,
         periodMs: 50,
+        counter: CanCounterConfig(
+          bitOffset: 4,
+          bitLength: 4,
+          initialValue: 2,
+          increment: 3,
+        ),
         crc: CanCrcConfig(
           algorithm: 'CUSTOM',
           rangeStart: 0,

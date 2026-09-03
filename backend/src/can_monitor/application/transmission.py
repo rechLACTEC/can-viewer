@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from can_monitor.domain.crc import CrcInsertion, insert_crc
+from can_monitor.domain.counter import CounterConfig, insert_bit_field
 from can_monitor.domain.models import SendFrameCommand
 from can_monitor.errors import ConflictError, InvalidRequestError
 
@@ -43,16 +44,49 @@ class TransmissionMessage:
     mode: TransmissionMode
     period_ms: float | None = None
     crc: CrcInsertion | None = None
+    counter: CounterConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.counter is None:
+            return
+        self.counter.validate(len(self.payload))
+        if self.crc is not None:
+            counter_start = self.counter.bit_offset
+            counter_end = counter_start + self.counter.bit_length
+            crc_start = self.crc.position * 8
+            crc_end = crc_start + self.crc.parameters.width
+            if counter_start < crc_end and crc_start < counter_end:
+                raise ValueError("Counter field overlaps CRC output field")
 
     @property
     def frequency_hz(self) -> float | None:
         return 1000.0 / self.period_ms if self.period_ms is not None else None
 
-    def command(self) -> tuple[SendFrameCommand, int | None]:
+    def render(
+        self, counter_value: int | None = None
+    ) -> tuple[bytes, bytes, int | None, int | None]:
         payload = self.payload
+        applied_counter = None
+        if self.counter is not None:
+            applied_counter = (
+                self.counter.initial_value if counter_value is None else counter_value
+            )
+            payload = insert_bit_field(
+                payload,
+                bit_offset=self.counter.bit_offset,
+                bit_length=self.counter.bit_length,
+                value=applied_counter,
+            )
+        payload_after_counter = payload
         crc_value = None
         if self.crc is not None:
             payload, crc_value = insert_crc(payload, self.crc)
+        return payload_after_counter, payload, applied_counter, crc_value
+
+    def command(
+        self, counter_value: int | None = None
+    ) -> tuple[SendFrameCommand, int | None]:
+        _, payload, _, crc_value = self.render(counter_value)
         return (
             SendFrameCommand(
                 can_id=self.can_id,
@@ -121,10 +155,20 @@ class TransmissionPlan:
         self._telemetry = {
             message.message_id: MessageTelemetry() for message in messages
         }
+        self._counter_values: dict[str, int] = {}
+        self._reset_counters()
+
+    def _reset_counters(self) -> None:
+        self._counter_values = {
+            message.message_id: message.counter.initial_value
+            for message in self.messages
+            if message.counter is not None
+        }
 
     def start(self) -> dict[str, object]:
         if self.state is not TransmissionPlanState.STOPPED or self._task is not None:
             raise ConflictError("Transmission plan has already been started")
+        self._reset_counters()
         self.state = TransmissionPlanState.RUNNING
         self._task = asyncio.create_task(
             self._run(), name=f"can-transmission-{self.plan_id}"
@@ -185,6 +229,7 @@ class TransmissionPlan:
     async def send_once(self) -> dict[str, object]:
         if self.state is not TransmissionPlanState.STOPPED or self._task is not None:
             raise ConflictError("Stop the cyclic transmission before sending once")
+        self._reset_counters()
         for message in self.messages:
             if message.enabled:
                 await self._send(message, allow_stopped=True)
@@ -278,8 +323,13 @@ class TransmissionPlan:
             if not allow_stopped and not allowed_state:
                 return
             try:
-                command, crc_value = message.command()
+                counter_value = self._counter_values.get(message.message_id)
+                command, crc_value = message.command(counter_value)
                 await self._sender(command)
+                if message.counter is not None and counter_value is not None:
+                    self._counter_values[message.message_id] = (
+                        message.counter.next_value(counter_value)
+                    )
                 telemetry.sent_frames += 1
                 sent_at = self._monotonic()
                 if telemetry.first_transmission_monotonic is None:
@@ -357,6 +407,8 @@ class TransmissionPlan:
             "configured_frequency_hz": message.frequency_hz,
             "effective_frequency_hz": effective_frequency,
             "crc_enabled": message.crc is not None,
+            "counter_enabled": message.counter is not None,
+            "current_counter_value": self._counter_values.get(message.message_id),
             "state": telemetry.state,
             "sent_frames": telemetry.sent_frames,
             "send_errors": telemetry.send_errors,

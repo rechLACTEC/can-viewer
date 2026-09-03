@@ -96,6 +96,13 @@ bucket monotônico; por padrão, permite até 1000 frames/s somando mensagens e 
 manuais. A telemetria separa frequência configurada, frequência efetiva, erros e
 deadlines perdidos. Python/Linux comum não oferece garantia hard real-time.
 
+Cada mensagem também pode definir um contador automático de 1 a 8 bits. A
+numeração considera o bit 0 como o LSB do byte 0, o bit 7 como seu MSB e o bit 8
+como o LSB do byte 1. O backend insere o contador no payload base, calcula e insere
+o CRC em seguida e só avança o valor após `bus.send()` concluir sem erro. Campos do
+contador que sobreponham os bytes de saída do CRC são rejeitados; a região usada
+para calcular o CRC pode incluir o contador.
+
 ## Configuração
 
 - `CAN_MONITOR_TX_ENABLED=false`
