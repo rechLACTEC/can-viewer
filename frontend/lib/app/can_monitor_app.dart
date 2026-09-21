@@ -50,6 +50,8 @@ class _CanMonitorAppState extends State<CanMonitorApp> {
       title: 'CAN Monitor',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        fontFamily: 'Roboto',
+        fontFamilyFallback: const ['NotoSansSymbols2'],
         colorScheme: ColorScheme.fromSeed(
           seedColor: seed,
           brightness: Brightness.dark,

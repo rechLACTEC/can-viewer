@@ -1,73 +1,91 @@
 # CAN Viewer
 
-Monitor CAN funcional com backend Python/SocketCAN e frontend Flutter Web. O backend descobre interfaces Linux, controla aquisição e transmissão, calcula métricas de timing e entrega frames em tempo real; o Flutter permanece remoto e nunca acessa diretamente o barramento.
+Monitor CAN com backend Python/SocketCAN e frontend Flutter Web. No modo de execução da Jetson, o FastAPI serve a interface, REST e WebSocket na mesma origem; depois de preparado, o sistema não precisa de Internet, Flutter, uv ou registries para iniciar.
 
-## Tecnologias
+## Desenvolvimento local
 
-- **Backend:** Python 3.12, FastAPI, `python-can`/SocketCAN e `uv`
-- **Frontend:** Flutter/Dart, HTTP e WebSocket
-
-## Estrutura
-
-```text
-.
-├── backend/          # Domínio, serviço de sessão, adaptador SocketCAN e API
-├── frontend/         # Aplicação Flutter Web/mobile
-├── docs/             # Reunião técnica, contrato, QA e ADRs
-└── scripts/          # Configuração reversível de vcan para desenvolvimento
-```
-
-## Requisitos
-
-- Linux para SocketCAN ou `vcan`
-- uv 0.9 ou mais recente e Python 3.12+
-- Flutter estável com Dart compatível
-
-## Backend
+Requer Python 3.12, uv e Flutter. Pode acessar a Internet para preparar dependências e mantém hot reload:
 
 ```bash
-cd backend
-uv sync --dev
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q
-uv run uvicorn can_monitor.main:app --reload --host 127.0.0.1 --port 8000
+./scripts/dev.sh
 ```
 
-Para criar `vcan0` sem instalar pacotes nem executar `sudo` automaticamente:
+Defaults: frontend `http://127.0.0.1:5173`, API `http://127.0.0.1:8000`. Para abrir a partir de outro computador na LAN:
 
 ```bash
-./scripts/setup-vcan.sh up vcan0
+CAN_VIEWER_LAN_IP=192.168.1.10 ./scripts/dev.sh
 ```
 
-## Frontend Web
+## Preparação/build
+
+Esta é a única etapa que pode baixar dependências e artefatos:
 
 ```bash
-cd frontend
-flutter pub get
-flutter analyze
-flutter test
-flutter run -d chrome --dart-define=CAN_API_BASE_URL=http://localhost:8000
+./scripts/setup.sh
 ```
 
-## Iniciar para acesso na rede local
+O comando sincroniza o backend estritamente com `uv.lock` e gera `frontend/build/web` com CanvasKit e fontes locais, sem service worker obrigatório. Opções:
 
-O script abaixo detecta o IP local, inicia backend e frontend e mostra a URL que pode
-ser aberta em outros dispositivos conectados à mesma rede:
+```bash
+./scripts/setup.sh --backend-only --production  # execute na Jetson conectada
+./scripts/setup.sh --frontend-only              # pode executar no PC
+```
+
+O ambiente Python não é portátil entre o PC x86 e a Jetson ARM. Prepare `backend/.venv` na própria Jetson, ou produza um wheelhouse compatível com a mesma arquitetura, Python e sistema operacional. O diretório Web é portátil e pode ser copiado inteiro do PC para a Jetson.
+
+## Execução offline na Jetson
+
+Depois de transferir uma versão preparada:
 
 ```bash
 ./scripts/start.sh
 ```
 
-Use `Ctrl+C` para encerrar os dois processos. Se a detecção automática escolher o IP
-errado, informe explicitamente o endereço da máquina:
+Acesse `http://<IP_DA_JETSON>:8000` em qualquer PC da mesma LAN. O script apenas valida os artefatos e executa o Python de `backend/.venv`; não chama `uv`, Flutter, package registries ou servidores de desenvolvimento.
+
+Antes de iniciar, o preflight confirma o bundle Web completo, incluindo `flutter.js`,
+`manifest.json`, favicon, CanvasKit JS/WASM, `FontManifest.json` e as fontes locais.
+Um bundle parcial é rejeitado antes de abrir a porta HTTP.
+
+Variáveis úteis:
+
+- `CAN_VIEWER_HOST` — bind do servidor, padrão `0.0.0.0`;
+- `CAN_VIEWER_BACKEND_PORT` — porta única de UI/API/WS, padrão `8000`;
+- `CAN_VIEWER_PYTHON` — Python preparado, padrão `backend/.venv/bin/python`;
+- `CAN_MONITOR_FRONTEND_DIRECTORY` — build Web, padrão `frontend/build/web`;
+- `CAN_MONITOR_RECORDING_DIRECTORY` — gravações, padrão `recordings/`.
+
+## Atualização em local sem Internet
+
+Prepare antes de ir a campo ou em uma máquina compatível:
+
+1. gere o build Web no PC com `./scripts/setup.sh --frontend-only`;
+2. prepare as dependências Python na Jetson enquanto houver acesso aos pacotes, com `./scripts/setup.sh --backend-only --production`;
+3. transfira o repositório e `frontend/build/web` completo pela LAN ou mídia removível;
+4. não substitua a `.venv` ARM da Jetson por uma criada no PC;
+5. no local isolado, use somente `./scripts/start.sh`.
+
+Um `git pull` não faz parte do runtime e não deve ser necessário para continuar executando a versão já instalada.
+
+## Validação offline
+
+Com o backend e build preparados, em um Linux com user namespaces, Chrome/Chromium e suporte a `vcan`:
 
 ```bash
-CAN_VIEWER_LAN_IP=192.168.1.10 ./scripts/start.sh
+./scripts/test-offline.sh
 ```
 
-As portas padrão são `9000` para a interface e `8000` para a API. Elas podem ser
-alteradas com `CAN_VIEWER_FRONTEND_PORT` e `CAN_VIEWER_BACKEND_PORT`. O firewall do
-host precisa permitir conexões TCP nessas portas para que outros dispositivos acessem.
-Se necessário, selecione uma instalação específica do Flutter com
-`CAN_VIEWER_FLUTTER_BIN=/caminho/flutter/bin/flutter`.
+O teste cria um namespace de rede sem rota externa e um `vcan0` isolado. Em duas inicializações independentes, abre um perfil limpo do navegador, confirma que todos os requests são locais, verifica ausência de service worker, testa REST, WebSocket same-origin e TX→RX via SocketCAN. Ele não altera as interfaces de rede do host.
 
-Consulte [a documentação do backend](backend/README.md), o [contrato da API](docs/api-contract.md) e os [ADRs](docs/adr/) para detalhes de segurança, filtros, timestamps e limitações de medição de perda.
+Testes normais:
+
+```bash
+cd backend
+PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -p no:cacheprovider
+
+cd ../frontend
+flutter analyze --no-pub
+flutter test --no-pub
+```
+
+Consulte [a implantação offline](docs/OFFLINE_DEPLOYMENT.md), [o backend](backend/README.md) e [o contrato da API](docs/api-contract.md) para detalhes.

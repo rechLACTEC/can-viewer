@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from can_monitor.config import Settings
@@ -41,3 +43,12 @@ def test_default_aggregate_tx_limit_supports_multiple_200_hz_messages(
 def test_cors_origins_must_be_absolute_http_origins() -> None:
     with pytest.raises(ValueError, match="Invalid CORS origin"):
         Settings(cors_origins=("*",))
+
+
+def test_frontend_directory_is_optional_and_reads_environment(monkeypatch) -> None:
+    monkeypatch.delenv("CAN_MONITOR_FRONTEND_DIRECTORY", raising=False)
+    assert Settings.from_env().frontend_directory is None
+    monkeypatch.setenv("CAN_MONITOR_FRONTEND_DIRECTORY", "/opt/can-viewer/web")
+    assert Settings.from_env().frontend_directory == Path("/opt/can-viewer/web")
+    monkeypatch.setenv("CAN_MONITOR_FRONTEND_DIRECTORY", "")
+    assert Settings.from_env().frontend_directory is None

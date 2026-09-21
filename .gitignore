@@ -27,7 +27,8 @@ htmlcov/
 # Local agent and editor configuration
 /.agents/
 /.vscode/
-/docs/
+/docs/*
+!/docs/OFFLINE_DEPLOYMENT.md
 
 # IDE
 .idea/

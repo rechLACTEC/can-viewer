@@ -3,12 +3,17 @@
 Backend FastAPI para descoberta, aquisição, análise e transmissão manual/cíclica de frames via
 `python-can`/SocketCAN. O navegador nunca acessa o barramento diretamente.
 
-## Execução
+## Desenvolvimento do backend
 
 ```bash
 uv sync --dev
 uv run uvicorn can_monitor.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+No modo de execução da Jetson, use `../scripts/start.sh`. Ele executa o Python já
+preparado diretamente e serve `frontend/build/web` pelo FastAPI, sem sincronizar
+dependências ou iniciar o servidor de desenvolvimento Flutter. A preparação fica em
+`../scripts/setup.sh`; consulte `../docs/OFFLINE_DEPLOYMENT.md`.
 
 Para desenvolvimento Linux sem hardware, crie `vcan0` explicitamente:
 
@@ -117,8 +122,16 @@ para calcular o CRC pode incluir o contador.
 - `CAN_MONITOR_RECORDING_DIRECTORY=/data/recordings`
 - `CAN_MONITOR_RECORDING_QUEUE_SIZE=8192`
 - `CAN_MONITOR_RECORDING_MAX_BYTES=268435456`
+- `CAN_MONITOR_FRONTEND_DIRECTORY` vazio no modo backend isolado; caminho do build
+  Flutter Web no modo integrado/offline
 - `CAN_MONITOR_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080`
 - `CAN_MONITOR_LOG_LEVEL=INFO`
+
+Quando o frontend integrado está ativo, `/docs` e `/redoc` ficam desabilitados para
+que o runtime não dependa dos assets CDN usados pela documentação interativa padrão
+do FastAPI. `/openapi.json` permanece disponível. O WebSocket aceita a origem exata
+do próprio servidor, permitindo acesso por qualquer IP da Jetson sem rebuild; origens
+adicionais continuam controladas por `CAN_MONITOR_CORS_ORIGINS`.
 
 Filas e buffers são limitados. Em sobrecarga, frames antigos são descartados para
 preservar frescor e os contadores `adapter_dropped_frames` e

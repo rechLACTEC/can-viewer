@@ -6,14 +6,17 @@ class AppConfig {
 
   const AppConfig._(this.apiBaseUri);
 
-  factory AppConfig.fromEnvironment() {
-    const raw = String.fromEnvironment(
-      'CAN_API_BASE_URL',
-      defaultValue: 'http://localhost:8000',
-    );
-    final uri = Uri.parse(raw);
-    _validate(uri);
-    return AppConfig(apiBaseUri: uri);
+  factory AppConfig.fromEnvironment({
+    Uri? pageUri,
+    String apiBaseUrl = const String.fromEnvironment('CAN_API_BASE_URL'),
+  }) {
+    if (apiBaseUrl.isNotEmpty) {
+      return AppConfig(apiBaseUri: Uri.parse(apiBaseUrl));
+    }
+    final page = pageUri ?? Uri.base;
+    _validate(page);
+    // The browser's origin follows the Jetson address without rebuilding.
+    return AppConfig(apiBaseUri: Uri.parse(page.origin));
   }
 
   final Uri apiBaseUri;

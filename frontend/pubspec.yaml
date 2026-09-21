@@ -59,6 +59,22 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Registered Roboto prevents the Flutter Web engine's default CDN download.
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+    - family: NotoSansSymbols2
+      fonts:
+        - asset: assets/fonts/NotoSansSymbols2-Regular.ttf
+  assets:
+    - assets/fonts/Roboto_LICENSE.txt
+    - assets/fonts/NotoSansSymbols2_LICENSE.txt
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

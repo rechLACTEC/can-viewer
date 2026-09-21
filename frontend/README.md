@@ -1,17 +1,15 @@
-# can_viewer
+# Frontend Flutter
 
-Interface Flutter para monitoramento de barramento CAN.
+Cliente Web do CAN Viewer. No modo da Jetson, é compilado previamente e servido pelo FastAPI na mesma origem da API e do WebSocket.
 
-## Getting Started
+```bash
+# desenvolvimento/hot reload, a partir da raiz
+./scripts/dev.sh
 
-This project is a starting point for a Flutter application.
+# build autocontido, a partir da raiz
+./scripts/setup.sh --frontend-only
+```
 
-A few resources to get you started if this is your first Flutter project:
+O build de produção contém CanvasKit, ícones e fontes locais e não registra service worker. `CAN_API_BASE_URL` é um override de desenvolvimento; quando vazio, a aplicação usa automaticamente a origem da página, por exemplo `http://192.168.1.20:8000`.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Não publique `build/` no Git. Transfira `frontend/build/web` completo como artefato junto da versão preparada para a Jetson.

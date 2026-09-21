@@ -21,6 +21,7 @@ from can_monitor.api.schemas import (
     TransmissionPlanRequest,
     TxEnabledRequest,
 )
+from can_monitor.api.web_runtime import FrontendStaticFiles, websocket_origin_allowed
 from can_monitor.application.session import CanSessionManager
 from can_monitor.config import Settings
 from can_monitor.domain.models import CanInterfaceInfo, SendFrameCommand
@@ -79,6 +80,14 @@ def create_app(
     discoverer: InterfaceDiscoverer | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    frontend_directory = settings.frontend_directory
+    if frontend_directory is not None:
+        frontend_directory = frontend_directory.resolve()
+        if not frontend_directory.is_dir() or not (frontend_directory / "index.html").is_file():
+            raise ValueError(
+                "CAN_MONITOR_FRONTEND_DIRECTORY must contain a prepared web build "
+                f"with index.html: {frontend_directory}"
+            )
     logging.basicConfig(
         level=getattr(logging, settings.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -108,6 +117,8 @@ def create_app(
         title="CAN Monitor API",
         version="1.0.0",
         lifespan=lifespan,
+        docs_url=None if frontend_directory is not None else "/docs",
+        redoc_url=None if frontend_directory is not None else "/redoc",
     )
     app.state.session_manager = manager
     app.state.interface_discoverer = discoverer
@@ -370,11 +381,7 @@ def create_app(
 
     @app.websocket("/api/v1/can/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
-        origin = websocket.headers.get("origin")
-        if settings.cors_origins and origin not in settings.cors_origins:
-            await websocket.close(code=4403, reason="WebSocket origin not allowed")
-            return
-        if not settings.cors_origins and origin is not None:
+        if not websocket_origin_allowed(websocket, settings.cors_origins):
             await websocket.close(code=4403, reason="WebSocket origin not allowed")
             return
         try:
@@ -427,5 +434,12 @@ def create_app(
             pass
         finally:
             session.unsubscribe(subscription.identifier)
+
+    if frontend_directory is not None:
+        app.mount(
+            "/",
+            FrontendStaticFiles(directory=frontend_directory, html=True),
+            name="frontend",
+        )
 
     return app

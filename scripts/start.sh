@@ -1,124 +1,54 @@
 #!/usr/bin/env bash
-
+# RUN: inicia somente artefatos e dependências já preparados, sem ferramentas de build.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd -- "$script_dir/.." && pwd)"
-backend_dir="$project_dir/backend"
-frontend_dir="$project_dir/frontend"
-
 backend_port="${CAN_VIEWER_BACKEND_PORT:-8000}"
-frontend_port="${CAN_VIEWER_FRONTEND_PORT:-5173}"
+bind_host="${CAN_VIEWER_HOST:-0.0.0.0}"
+python_bin="${CAN_VIEWER_PYTHON:-$project_dir/backend/.venv/bin/python}"
+frontend_dir="${CAN_MONITOR_FRONTEND_DIRECTORY:-$project_dir/frontend/build/web}"
 recording_dir="${CAN_MONITOR_RECORDING_DIRECTORY:-$project_dir/recordings}"
-flutter_bin="${CAN_VIEWER_FLUTTER_BIN:-}"
 
-detect_lan_ip() {
-  local detected=""
-
-  if command -v ip >/dev/null 2>&1; then
-    detected="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
-  fi
-  if [[ -z "$detected" ]] && command -v hostname >/dev/null 2>&1; then
-    detected="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  fi
-
-  printf '%s' "$detected"
-}
-
-lan_ip="${CAN_VIEWER_LAN_IP:-$(detect_lan_ip)}"
-
-if [[ -z "$lan_ip" ]]; then
-  printf 'Erro: não foi possível detectar o IP da rede local.\n' >&2
-  printf 'Informe-o manualmente: CAN_VIEWER_LAN_IP=192.168.1.10 ./scripts/start.sh\n' >&2
+if [[ ! "$backend_port" =~ ^[0-9]{1,5}$ ]] || ((10#$backend_port < 1 || 10#$backend_port > 65535)); then
+  printf 'Erro: porta inválida: %s\n' "$backend_port" >&2
   exit 2
 fi
-
-if [[ ! "$backend_port" =~ ^[0-9]+$ ]] || ((backend_port < 1 || backend_port > 65535)); then
-  printf 'Erro: porta inválida para o backend: %s\n' "$backend_port" >&2
-  exit 2
-fi
-if [[ ! "$frontend_port" =~ ^[0-9]+$ ]] || ((frontend_port < 1 || frontend_port > 65535)); then
-  printf 'Erro: porta inválida para o frontend: %s\n' "$frontend_port" >&2
-  exit 2
-fi
-
-if ! command -v uv >/dev/null 2>&1; then
-  printf 'Erro: comando obrigatório não encontrado: uv\n' >&2
+if [[ ! -x "$python_bin" ]]; then
+  printf 'Erro: Python preparado não encontrado em %s.\nExecute scripts/setup.sh --backend-only na Jetson antes do uso offline.\n' "$python_bin" >&2
   exit 3
 fi
-
-if [[ -z "$flutter_bin" ]]; then
-  flutter_bin="$(command -v flutter 2>/dev/null || true)"
-  snap_flutter_sdk="${HOME:-}/snap/flutter/common/flutter/bin/flutter"
-  if [[ "$flutter_bin" == "/snap/bin/flutter" && -x "$snap_flutter_sdk" ]]; then
-    flutter_bin="$snap_flutter_sdk"
+required_artifacts=(
+  index.html
+  flutter.js
+  flutter_bootstrap.js
+  main.dart.js
+  manifest.json
+  favicon.png
+  canvaskit/canvaskit.js
+  canvaskit/canvaskit.wasm
+  assets/FontManifest.json
+  assets/assets/fonts/Roboto-Regular.ttf
+  assets/assets/fonts/Roboto-Medium.ttf
+  assets/assets/fonts/Roboto-Bold.ttf
+  assets/assets/fonts/NotoSansSymbols2-Regular.ttf
+)
+for artifact in "${required_artifacts[@]}"; do
+  if [[ ! -f "$frontend_dir/$artifact" ]]; then
+    printf 'Erro: build Web ausente/incompleto em %s.\nExecute scripts/setup.sh --frontend-only no PC e transfira frontend/build/web para a Jetson.\n' "$frontend_dir" >&2
+    exit 3
   fi
-fi
-if [[ -z "$flutter_bin" || ! -x "$flutter_bin" ]]; then
-  printf 'Erro: SDK Flutter executável não encontrado.\n' >&2
-  printf 'Informe-o com CAN_VIEWER_FLUTTER_BIN=/caminho/flutter/bin/flutter.\n' >&2
+done
+if ! "$python_bin" -c 'import can, fastapi, uvicorn' >/dev/null 2>&1; then
+  printf 'Erro: dependências Python ausentes. Prepare o backend antes do uso offline.\n' >&2
   exit 3
 fi
-
-backend_pid=""
-frontend_pid=""
-
-cleanup() {
-  trap - EXIT INT TERM
-  printf '\nEncerrando CAN Viewer...\n'
-  if [[ -n "$frontend_pid" ]] && kill -0 "$frontend_pid" 2>/dev/null; then
-    kill "$frontend_pid" 2>/dev/null || true
-  fi
-  if [[ -n "$backend_pid" ]] && kill -0 "$backend_pid" 2>/dev/null; then
-    kill "$backend_pid" 2>/dev/null || true
-  fi
-  [[ -z "$frontend_pid" ]] || wait "$frontend_pid" 2>/dev/null || true
-  [[ -z "$backend_pid" ]] || wait "$backend_pid" 2>/dev/null || true
-}
-
-trap cleanup EXIT INT TERM
 
 mkdir -p -- "$recording_dir"
-
-printf 'Preparando dependências do backend...\n'
-(
-  cd -- "$backend_dir"
-  uv sync --dev
-)
-
-printf 'Preparando dependências do frontend...\n'
-(
-  cd -- "$frontend_dir"
-  "$flutter_bin" pub get
-)
-
-api_url="http://$lan_ip:$backend_port"
-app_url="http://$lan_ip:$frontend_port"
-cors_origins="$app_url,http://localhost:$frontend_port,http://127.0.0.1:$frontend_port"
-
-printf '\nIniciando backend em %s...\n' "$api_url"
-(
-  cd -- "$backend_dir"
-  exec env \
-    CAN_MONITOR_CORS_ORIGINS="$cors_origins" \
-    CAN_MONITOR_RECORDING_DIRECTORY="$recording_dir" \
-    uv run uvicorn can_monitor.main:app \
-      --host 0.0.0.0 \
-      --port "$backend_port"
-) &
-backend_pid="$!"
-
-printf 'Iniciando frontend em %s...\n' "$app_url"
-(
-  cd -- "$frontend_dir"
-  exec "$flutter_bin" run -d web-server \
-    --web-hostname 0.0.0.0 \
-    --web-port "$frontend_port" \
-    --dart-define="CAN_API_BASE_URL=$api_url"
-) &
-frontend_pid="$!"
-
-printf '\nCAN Viewer disponível na rede local:\n  %s\n' "$app_url"
-printf 'Pressione Ctrl+C para encerrar backend e frontend.\n\n'
-
-wait -n "$backend_pid" "$frontend_pid"
+printf 'CAN Viewer: http://<IP_DA_JETSON>:%s (bind %s)\nPressione Ctrl+C para encerrar.\n' "$backend_port" "$bind_host"
+exec env \
+  CAN_MONITOR_FRONTEND_DIRECTORY="$frontend_dir" \
+  CAN_MONITOR_RECORDING_DIRECTORY="$recording_dir" \
+  "$python_bin" -m uvicorn can_monitor.main:app \
+  --app-dir "$project_dir/backend/src" \
+  --host "$bind_host" --port "$backend_port"

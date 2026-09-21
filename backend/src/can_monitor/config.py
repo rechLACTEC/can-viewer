@@ -28,6 +28,7 @@ class Settings:
     recording_directory: Path = Path("/data/recordings")
     recording_queue_size: int = 8192
     recording_max_bytes: int = 256 * 1024 * 1024
+    frontend_directory: Path | None = None
     cors_origins: tuple[str, ...] = (
         "http://localhost:3000",
         "http://localhost:5173",
@@ -85,6 +86,11 @@ class Settings:
             ),
             recording_max_bytes=int(
                 os.getenv("CAN_MONITOR_RECORDING_MAX_BYTES", str(256 * 1024 * 1024))
+            ),
+            frontend_directory=(
+                Path(directory)
+                if (directory := os.getenv("CAN_MONITOR_FRONTEND_DIRECTORY"))
+                else None
             ),
             cors_origins=tuple(
                 origin.strip()
