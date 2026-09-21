@@ -43,11 +43,14 @@ class TransmissionMessage:
     payload: bytes
     mode: TransmissionMode
     period_ms: float | None = None
+    duration_seconds: float | None = None
     crc: CrcInsertion | None = None
     counter: CounterConfig | None = None
 
     def __post_init__(self) -> None:
         if self.counter is None:
+            if self.duration_seconds is not None and self.duration_seconds <= 0:
+                raise ValueError("Message duration must be positive")
             return
         self.counter.validate(len(self.payload))
         if self.crc is not None:
@@ -57,6 +60,8 @@ class TransmissionMessage:
             crc_end = crc_start + self.crc.parameters.width
             if counter_start < crc_end and crc_start < counter_end:
                 raise ValueError("Counter field overlaps CRC output field")
+        if self.duration_seconds is not None and self.duration_seconds <= 0:
+            raise ValueError("Message duration must be positive")
 
     @property
     def frequency_hz(self) -> float | None:
@@ -109,6 +114,9 @@ class MessageTelemetry:
     state: str = "stopped"
     first_transmission_monotonic: float | None = None
     last_transmission_monotonic: float | None = None
+    elapsed_seconds: float = 0.0
+    active_started_monotonic: float | None = None
+    termination_reason: str | None = None
 
 
 Sender = Callable[[SendFrameCommand], Awaitable[None]]
@@ -149,6 +157,7 @@ class TransmissionPlan:
         self._sender = sender
         self._bitrate = bitrate
         self._monotonic = monotonic
+        self._termination_reason: str | None = None
         self._wake = asyncio.Event()
         self._send_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -169,6 +178,16 @@ class TransmissionPlan:
         if self.state is not TransmissionPlanState.STOPPED or self._task is not None:
             raise ConflictError("Transmission plan has already been started")
         self._reset_counters()
+        self._termination_reason = None
+        for message in self.messages:
+            telemetry = self._telemetry[message.message_id]
+            telemetry.elapsed_seconds = 0.0
+            telemetry.active_started_monotonic = (
+                self._monotonic()
+                if message.enabled and message.mode is TransmissionMode.CYCLIC
+                else None
+            )
+            telemetry.termination_reason = None
         self.state = TransmissionPlanState.RUNNING
         self._task = asyncio.create_task(
             self._run(), name=f"can-transmission-{self.plan_id}"
@@ -186,6 +205,8 @@ class TransmissionPlan:
                 raise ConflictError("Transmission plan has no cyclic messages")
             self.state = TransmissionPlanState.PAUSED
             for message in self.messages:
+                self._pause_message_clock(message)
+            for message in self.messages:
                 if message.enabled and message.mode is TransmissionMode.CYCLIC:
                     self._telemetry[message.message_id].state = "paused"
         self._wake.set()
@@ -196,6 +217,14 @@ class TransmissionPlan:
             if self.state is not TransmissionPlanState.PAUSED:
                 raise ConflictError("Only a paused transmission can be resumed")
             self.state = TransmissionPlanState.RUNNING
+            for message in self.messages:
+                telemetry = self._telemetry[message.message_id]
+                if (
+                    message.enabled
+                    and message.mode is TransmissionMode.CYCLIC
+                    and telemetry.termination_reason is None
+                ):
+                    telemetry.active_started_monotonic = self._monotonic()
             for message in self.messages:
                 if message.enabled and message.mode is TransmissionMode.CYCLIC:
                     self._telemetry[message.message_id].state = "active"
@@ -210,6 +239,9 @@ class TransmissionPlan:
             }:
                 raise ConflictError("Transmission plan is not active")
             self.state = TransmissionPlanState.STOPPED
+            self._termination_reason = "manual"
+            for message in self.messages:
+                self._pause_message_clock(message)
             for telemetry in self._telemetry.values():
                 telemetry.state = "stopped"
         self._wake.set()
@@ -290,14 +322,31 @@ class TransmissionPlan:
                     heapq.heapify(schedule)
                 continue
 
+            self._finish_expired_messages()
+            if not any(
+                self._message_is_active(message) for message in cyclic
+            ):
+                self._finish_duration()
+                break
+
+            now = self._monotonic()
             deadline, index, message = schedule[0]
-            delay = max(0.0, deadline - self._monotonic())
+            delay = max(0.0, deadline - now)
+            for _, _, candidate in schedule:
+                remaining = self._message_remaining(candidate)
+                if remaining is not None:
+                    delay = min(delay, remaining)
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=delay)
                 continue
             except TimeoutError:
                 pass
+
+            self._finish_expired_messages()
+            if not self._message_is_active(message):
+                heapq.heappop(schedule)
+                continue
 
             heapq.heappop(schedule)
             await self._send(message)
@@ -307,6 +356,68 @@ class TransmissionPlan:
             )
             self._telemetry[message.message_id].deadline_misses += misses
             heapq.heappush(schedule, (next_deadline, index, message))
+
+        if self.state is TransmissionPlanState.STOPPED:
+            self._task = None
+
+    def _pause_message_clock(self, message: TransmissionMessage) -> None:
+        telemetry = self._telemetry[message.message_id]
+        if telemetry.active_started_monotonic is not None:
+            telemetry.elapsed_seconds += max(
+                0.0, self._monotonic() - telemetry.active_started_monotonic
+            )
+            telemetry.active_started_monotonic = None
+
+    def _message_elapsed(self, message: TransmissionMessage) -> float:
+        telemetry = self._telemetry[message.message_id]
+        elapsed = telemetry.elapsed_seconds
+        if (
+            self.state is TransmissionPlanState.RUNNING
+            and telemetry.active_started_monotonic is not None
+        ):
+            elapsed += max(
+                0.0, self._monotonic() - telemetry.active_started_monotonic
+            )
+        if message.duration_seconds is not None:
+            return min(elapsed, message.duration_seconds)
+        return elapsed
+
+    def _message_remaining(self, message: TransmissionMessage) -> float | None:
+        if message.duration_seconds is None:
+            return None
+        return max(0.0, message.duration_seconds - self._message_elapsed(message))
+
+    def _message_is_active(self, message: TransmissionMessage) -> bool:
+        return (
+            message.enabled
+            and message.mode is TransmissionMode.CYCLIC
+            and self._telemetry[message.message_id].termination_reason is None
+        )
+
+    def _finish_expired_messages(self) -> None:
+        for message in self.messages:
+            if (
+                self._message_is_active(message)
+                and self._message_remaining(message) is not None
+                and self._message_remaining(message) <= 0
+            ):
+                self._pause_message_clock(message)
+                self._telemetry[message.message_id].termination_reason = (
+                    "duration_elapsed"
+                )
+                self._telemetry[message.message_id].state = "stopped"
+
+    def _finish_duration(self) -> None:
+        if self.state not in {
+            TransmissionPlanState.RUNNING,
+            TransmissionPlanState.PAUSED,
+        }:
+            return
+        self.state = TransmissionPlanState.STOPPED
+        self._termination_reason = "all_messages_finished"
+        for telemetry in self._telemetry.values():
+            telemetry.state = "stopped"
+        self._wake.set()
 
     async def _send(
         self,
@@ -362,6 +473,7 @@ class TransmissionPlan:
             "session_id": self.session_id,
             "interface": self.interface,
             "state": self.state.value,
+            "termination_reason": self._termination_reason,
             "messages": [
                 self._message_snapshot(message) for message in self.messages
             ],
@@ -418,4 +530,9 @@ class TransmissionPlan:
             else None,
             "last_error": telemetry.last_error,
             "last_crc": telemetry.last_crc,
+            "duration_seconds": message.duration_seconds,
+            "elapsed_seconds": self._message_elapsed(message),
+            "remaining_seconds": self._message_remaining(message),
+            "termination_reason": telemetry.termination_reason,
+            "auto_stop": message.duration_seconds is not None,
         }

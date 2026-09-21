@@ -374,6 +374,8 @@ CanTransmissionStatus testTransmissionStatus(
           sentFrames: sentFrames,
           sendErrors: 0,
           deadlineMisses: 0,
+          durationSeconds: item.durationSeconds,
+          remainingSeconds: item.durationSeconds,
         ),
       )
       .toList(growable: false),

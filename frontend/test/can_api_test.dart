@@ -185,6 +185,7 @@ void main() {
         dataHex: '01 02 03 00',
         mode: CanTransmissionMode.cyclic,
         periodMs: 50,
+        durationSeconds: 10,
         counter: CanCounterConfig(
           bitOffset: 4,
           bitLength: 4,

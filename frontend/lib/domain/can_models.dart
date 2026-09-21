@@ -320,6 +320,7 @@ class CanTransmissionMessageConfig {
     required this.dataHex,
     required this.mode,
     this.periodMs,
+    this.durationSeconds,
     this.crc,
     this.counter,
   });
@@ -332,6 +333,7 @@ class CanTransmissionMessageConfig {
   final String dataHex;
   final CanTransmissionMode mode;
   final double? periodMs;
+  final double? durationSeconds;
   final CanCrcConfig? crc;
   final CanCounterConfig? counter;
 
@@ -347,6 +349,7 @@ class CanTransmissionMessageConfig {
         dataHex: dataHex,
         mode: mode,
         periodMs: periodMs,
+        durationSeconds: durationSeconds,
         crc: crc,
         counter: counter,
       );
@@ -360,6 +363,7 @@ class CanTransmissionMessageConfig {
     'data_hex': dataHex.replaceAll(RegExp(r'\s+'), '').toUpperCase(),
     'mode': mode.name,
     if (periodMs != null) 'period_ms': periodMs,
+    if (durationSeconds != null) 'duration_seconds': durationSeconds,
     if (crc != null) 'crc': crc!.toJson(),
     if (counter != null) 'counter': counter!.toJson(),
   };
@@ -376,6 +380,11 @@ class CanTransmissionMessageStatus {
     this.effectiveFrequencyHz,
     this.lastTransmission,
     this.lastError,
+    this.durationSeconds,
+    this.elapsedSeconds = 0,
+    this.remainingSeconds,
+    this.terminationReason,
+    this.autoStop = false,
   });
 
   factory CanTransmissionMessageStatus.fromJson(Map<String, Object?> json) =>
@@ -391,6 +400,11 @@ class CanTransmissionMessageStatus {
             ?.toDouble(),
         lastTransmission: _optionalDateTime(json['last_transmission']),
         lastError: json['last_error'] as String?,
+        durationSeconds: (json['duration_seconds'] as num?)?.toDouble(),
+        elapsedSeconds: (json['elapsed_seconds'] as num?)?.toDouble() ?? 0,
+        remainingSeconds: (json['remaining_seconds'] as num?)?.toDouble(),
+        terminationReason: json['termination_reason'] as String?,
+        autoStop: json['auto_stop'] as bool? ?? false,
       );
 
   final String messageId;
@@ -402,6 +416,11 @@ class CanTransmissionMessageStatus {
   final double? effectiveFrequencyHz;
   final DateTime? lastTransmission;
   final String? lastError;
+  final double? durationSeconds;
+  final double elapsedSeconds;
+  final double? remainingSeconds;
+  final String? terminationReason;
+  final bool autoStop;
 }
 
 class CanTransmissionStatus {

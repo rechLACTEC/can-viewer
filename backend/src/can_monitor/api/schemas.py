@@ -165,6 +165,7 @@ class TransmissionMessageRequest(StrictModel):
     period_ms: float | None = Field(
         default=None, ge=MIN_CYCLIC_PERIOD_MS, le=60_000
     )
+    duration_seconds: float | None = Field(default=None, gt=0, le=86400)
     crc: CrcRequest | None = None
     counter: CounterRequest | None = None
 
@@ -176,6 +177,8 @@ class TransmissionMessageRequest(StrictModel):
             raise ValueError("Cyclic messages require a period_ms")
         if self.mode == "single" and self.period_ms is not None:
             raise ValueError("Single messages must not define period_ms")
+        if self.mode == "single" and self.duration_seconds is not None:
+            raise ValueError("Single messages must not define duration_seconds")
         if self.crc is not None:
             from can_monitor.domain.crc import insert_crc
 
@@ -189,6 +192,7 @@ class TransmissionMessageRequest(StrictModel):
             payload=payload,
             mode=TransmissionMode(self.mode),
             period_ms=self.period_ms,
+            duration_seconds=self.duration_seconds,
             crc=self.crc.to_domain() if self.crc else None,
             counter=self.counter.to_domain() if self.counter else None,
         )
@@ -204,6 +208,7 @@ class TransmissionMessageRequest(StrictModel):
             payload=parse_hex_payload(self.data_hex, is_fd=self.is_fd),
             mode=TransmissionMode(self.mode),
             period_ms=self.period_ms,
+            duration_seconds=self.duration_seconds,
             crc=self.crc.to_domain() if self.crc else None,
             counter=self.counter.to_domain() if self.counter else None,
         )

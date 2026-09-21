@@ -44,6 +44,11 @@ class _TransmissionScreenState extends State<TransmissionScreen> {
     });
   }
 
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
   CanTransmissionMessageConfig? get _selectedMessage {
     for (final message in controller.transmissionMessages) {
       if (message.messageId == _selectedMessageId) return message;
@@ -420,7 +425,6 @@ class _HeaderAndControls extends StatelessWidget {
                   ),
                 ],
               ),
-              const Divider(height: 24),
               SwitchListTile(
                 key: const Key('physical-tx-toggle'),
                 contentPadding: EdgeInsets.zero,
@@ -605,12 +609,25 @@ class _MessageRow extends StatelessWidget {
           ),
           Expanded(child: Text(message.crc?.algorithm ?? 'Sem CRC')),
           SizedBox(
-            width: 90,
-            child: Text(
-              (status?.state ?? 'parada').toUpperCase(),
-              style: TextStyle(
-                color: status?.state == 'error' ? Colors.redAccent : null,
-              ),
+            width: 150,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  (status?.state ?? 'parada').toUpperCase(),
+                  style: TextStyle(
+                    color: status?.state == 'error' ? Colors.redAccent : null,
+                  ),
+                ),
+                Text(
+                  status?.durationSeconds == null
+                      ? 'Ilimitado'
+                      : status?.terminationReason == 'duration_elapsed'
+                      ? 'Encerrada automaticamente'
+                      : 'Restante: ${_seconds(status?.remainingSeconds ?? 0)} s',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ),
           ),
           Tooltip(
@@ -623,6 +640,12 @@ class _MessageRow extends StatelessWidget {
               if (status?.lastTransmission case final timestamp?)
                 'Último envio: ${timestamp.toLocal()}',
               if (status?.lastError case final error?) 'Último erro: $error',
+              if (status?.durationSeconds case final duration?)
+                'Duração: ${_seconds(duration)} s · Decorrido: ${_seconds(status?.elapsedSeconds ?? 0)} s',
+              if (status?.remainingSeconds case final remaining?)
+                'Restante: ${_seconds(remaining)} s',
+              if (status?.terminationReason == 'duration_elapsed')
+                'Encerrada automaticamente',
             ].join('\n'),
             child: const Icon(Icons.query_stats, size: 18),
           ),
@@ -678,6 +701,8 @@ class _TelemetryCard extends StatelessWidget {
   }
 }
 
+String _seconds(double value) => value.toStringAsFixed(1);
+
 class _MessageEditor extends StatefulWidget {
   const _MessageEditor({
     required this.controller,
@@ -701,6 +726,7 @@ class _MessageEditorState extends State<_MessageEditor> {
   late final TextEditingController _id;
   late final TextEditingController _payload;
   late final TextEditingController _rate;
+  late final TextEditingController _duration;
   late final TextEditingController _rangeStart;
   late final TextEditingController _rangeEnd;
   late final TextEditingController _position;
@@ -716,6 +742,7 @@ class _MessageEditorState extends State<_MessageEditor> {
   late bool _fd;
   late CanTransmissionMode _mode;
   bool _rateInHz = true;
+  bool _unlimitedDuration = true;
   late bool _crcEnabled;
   late bool _counterEnabled;
   late String _algorithm;
@@ -738,6 +765,10 @@ class _MessageEditorState extends State<_MessageEditor> {
     _rate = TextEditingController(
       text: value.frequencyHz?.toStringAsFixed(2) ?? '10',
     );
+    _duration = TextEditingController(
+      text: value.durationSeconds?.toString() ?? '10',
+    );
+    _unlimitedDuration = value.durationSeconds == null;
     _rangeStart = TextEditingController(text: '${crc?.rangeStart ?? 0}');
     _rangeEnd = TextEditingController(text: '${crc?.rangeEnd ?? 2}');
     _position = TextEditingController(text: '${crc?.position ?? 3}');
@@ -773,6 +804,7 @@ class _MessageEditorState extends State<_MessageEditor> {
       _id,
       _payload,
       _rate,
+      _duration,
       _rangeStart,
       _rangeEnd,
       _position,
@@ -804,6 +836,14 @@ class _MessageEditorState extends State<_MessageEditor> {
       period = _rateInHz ? 1000 / rate : rate;
       if (period < _minTransmissionPeriodMs || period > 60000) {
         _showError('Use período entre 5 e 60000 ms (máximo de 200 Hz).');
+        return null;
+      }
+    }
+    double? duration;
+    if (_mode == CanTransmissionMode.cyclic && !_unlimitedDuration) {
+      duration = double.tryParse(_duration.text.replaceAll(',', '.'));
+      if (duration == null || duration <= 0 || duration > 86400) {
+        _showError('A duração deve estar entre 0 e 86400 segundos.');
         return null;
       }
     }
@@ -890,6 +930,7 @@ class _MessageEditorState extends State<_MessageEditor> {
       dataHex: _spacedHex(_payload.text),
       mode: _mode,
       periodMs: period,
+      durationSeconds: duration,
       crc: crc,
       counter: counter,
     );
@@ -1025,11 +1066,16 @@ class _MessageEditorState extends State<_MessageEditor> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    Row(
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Expanded(
+                        SizedBox(
+                          width: 150,
                           child: DropdownButtonFormField<CanTransmissionMode>(
                             key: const Key('tx-mode-selector'),
+                            isExpanded: true,
                             initialValue: _mode,
                             decoration: const InputDecoration(
                               labelText: 'Modo',
@@ -1049,8 +1095,8 @@ class _MessageEditorState extends State<_MessageEditor> {
                           ),
                         ),
                         if (_mode == CanTransmissionMode.cyclic) ...[
-                          const SizedBox(width: 10),
-                          Expanded(
+                          SizedBox(
+                            width: 150,
                             child: TextFormField(
                               key: const Key('tx-rate-input'),
                               controller: _rate,
@@ -1066,7 +1112,6 @@ class _MessageEditorState extends State<_MessageEditor> {
                               validator: _positiveNumber,
                             ),
                           ),
-                          const SizedBox(width: 10),
                           SegmentedButton<bool>(
                             segments: const [
                               ButtonSegment(value: true, label: Text('Hz')),
@@ -1086,6 +1131,44 @@ class _MessageEditorState extends State<_MessageEditor> {
                                 _rateInHz = selection.first;
                               });
                             },
+                          ),
+                          SizedBox(
+                            width: 140,
+                            child: TextFormField(
+                              key: const Key('tx-duration-input'),
+                              controller: _duration,
+                              enabled: !_unlimitedDuration,
+                              decoration: const InputDecoration(
+                                labelText: 'Duração (s)',
+                                suffixText: 's',
+                              ),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              validator: (value) {
+                                if (_unlimitedDuration) return null;
+                                final parsed = double.tryParse(
+                                  (value ?? '').replaceAll(',', '.'),
+                                );
+                                return parsed != null && parsed > 0
+                                    ? null
+                                    : 'Informe uma duração positiva';
+                              },
+                            ),
+                          ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Checkbox(
+                                key: const Key('tx-unlimited-duration'),
+                                value: _unlimitedDuration,
+                                onChanged: (value) => setState(
+                                  () => _unlimitedDuration = value ?? true,
+                                ),
+                              ),
+                              const Text('Ilimitado'),
+                            ],
                           ),
                         ],
                       ],

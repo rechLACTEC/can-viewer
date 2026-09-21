@@ -28,6 +28,7 @@ def _message(
     enabled: bool = True,
     payload: bytes = b"\x01",
     crc: CrcInsertion | None = None,
+    duration_seconds: float | None = None,
 ) -> TransmissionMessage:
     return TransmissionMessage(
         message_id=message_id,
@@ -38,6 +39,7 @@ def _message(
         payload=payload,
         mode=mode,
         period_ms=period_ms if mode is TransmissionMode.CYCLIC else None,
+        duration_seconds=duration_seconds,
         crc=crc,
     )
 
@@ -125,7 +127,7 @@ def test_pause_resume_multiple_cycles_and_stop() -> None:
         plan = TransmissionPlan(
             session_id="session-1",
             interface="vcan0",
-            messages=(_message("cyclic", period_ms=10),),
+            messages=(_message("cyclic", period_ms=10, duration_seconds=10),),
             sender=sender,
         )
         plan.start()
@@ -148,6 +150,90 @@ def test_pause_resume_multiple_cycles_and_stop() -> None:
         await asyncio.sleep(0.02)
         assert sent == stopped_at
         assert status["state"] == "stopped"
+        assert status["termination_reason"] == "manual"
+
+    asyncio.run(scenario())
+
+
+def test_duration_counts_only_running_time_and_resumes_with_remaining_time() -> None:
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    async def scenario() -> None:
+        clock = Clock()
+
+        async def sender(_: SendFrameCommand) -> None:
+            pass
+
+        plan = TransmissionPlan(
+            session_id="session-lifecycle",
+            interface="vcan0",
+            messages=(_message("cyclic", period_ms=10, duration_seconds=10),),
+            sender=sender,
+            monotonic=clock,
+        )
+        plan.start()
+        await asyncio.sleep(0)
+        clock.value = 3
+        await plan.pause()
+        paused = plan.snapshot()
+        paused_message = paused["messages"][0]
+        assert paused_message["elapsed_seconds"] == pytest.approx(3)
+        assert paused_message["remaining_seconds"] == pytest.approx(7)
+
+        clock.value = 100
+        assert plan.snapshot()["messages"][0]["elapsed_seconds"] == pytest.approx(3)
+        await plan.resume()
+        clock.value = 104
+        resumed = plan.snapshot()
+        assert resumed["messages"][0]["elapsed_seconds"] == pytest.approx(7)
+        assert resumed["messages"][0]["remaining_seconds"] == pytest.approx(3)
+        await plan.stop()
+
+    asyncio.run(scenario())
+
+
+def test_duration_stops_multiple_messages_automatically_with_monotonic_clock() -> None:
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    async def scenario() -> None:
+        clock = Clock()
+        sent: list[bytes] = []
+
+        async def sender(command: SendFrameCommand) -> None:
+            sent.append(command.data)
+            clock.value += 2
+
+        plan = TransmissionPlan(
+            session_id="session-lifecycle",
+            interface="vcan0",
+            messages=(
+                _message("fast", period_ms=5, payload=b"fast", duration_seconds=2),
+                _message("slow", period_ms=50, payload=b"slow", duration_seconds=4),
+            ),
+            sender=sender,
+            monotonic=clock,
+        )
+        plan.start()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+        status = plan.snapshot()
+        assert status["state"] == "stopped"
+        assert status["termination_reason"] == "all_messages_finished"
+        messages = {item["message_id"]: item for item in status["messages"]}
+        assert messages["fast"]["termination_reason"] == "duration_elapsed"
+        assert messages["slow"]["termination_reason"] == "duration_elapsed"
+        assert messages["fast"]["remaining_seconds"] == pytest.approx(0)
+        assert messages["slow"]["remaining_seconds"] == pytest.approx(0)
+        assert sent
 
     asyncio.run(scenario())
 
@@ -309,6 +395,7 @@ def _request_messages() -> list[dict[str, object]]:
             "data_hex": "3132333435363700",
             "mode": "cyclic",
             "period_ms": 20,
+            "duration_seconds": 10,
             "crc": {
                 "algorithm": "CRC-8/SAE-J1850",
                 "range_start": 0,
@@ -358,6 +445,9 @@ def test_transmission_api_configuration_preview_lifecycle_and_stop_all() -> None
         configured = client.post(base, json=body)
         assert configured.status_code == 201
         plan_id = configured.json()["plan_id"]
+        first_status = configured.json()["messages"][0]
+        assert first_status["duration_seconds"] == 10
+        assert first_status["remaining_seconds"] == 10
         assert configured.json()["estimated_bus_load_percent"] is not None
         started = client.post(f"{base}/{plan_id}/start")
         assert started.json()["state"] == "running"

@@ -80,6 +80,8 @@ void main() {
       find.byKey(const Key('tx-payload-input')),
       '01 0A FF',
     );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('tx-mode-selector')));
     await tester.tap(find.byKey(const Key('tx-mode-selector')));
     await tester.pumpAndSettle();

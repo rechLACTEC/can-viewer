@@ -237,7 +237,7 @@ def create_app(
     ) -> dict[str, object]:
         session = manager.get(session_id)
         plan = session.configure_transmission(
-            tuple(message.to_domain() for message in payload.messages)
+            tuple(message.to_domain() for message in payload.messages),
         )
         return plan.snapshot()
 
@@ -251,7 +251,7 @@ def create_app(
     ) -> dict[str, object]:
         session = manager.get(session_id)
         plan = await session.send_transmission_once(
-            tuple(message.to_domain() for message in payload.messages)
+            tuple(message.to_domain() for message in payload.messages),
         )
         return plan.snapshot()
 
