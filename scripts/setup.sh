@@ -12,7 +12,7 @@ Sem opções: prepara backend com dependências de teste e compila Flutter Web.
 --production     Omite dependências Python de desenvolvimento/teste.
 
 Requer uv/Python para backend e Flutter para frontend. Pode usar Internet.
-Respeita uv.lock e pubspec.lock; atualizações de dependências são deliberadas.
+Respeita uv.lock; pubspec.lock pode ser atualizado pela resolução compatível do Pub.
 A execução posterior com scripts/start.sh não usa uv ou Flutter.
 HELP
 }
@@ -44,7 +44,11 @@ if [[ "$target" != frontend-only ]]; then
   dependency_group="--dev"
   if "$production"; then dependency_group="--no-dev"; fi
   printf 'Preparando backend com uv.lock (pode acessar Internet)...\n'
-  (cd -- "$project_dir/backend"; uv sync --locked "$dependency_group")
+  (cd -- "$project_dir/backend"; UV_PROJECT_ENVIRONMENT="$project_dir/backend/.venv" uv sync --locked "$dependency_group")
+  if [[ ! -x "$project_dir/backend/.venv/bin/python" ]]; then
+    printf 'Erro: uv concluiu sem preparar %s.\n' "$project_dir/backend/.venv/bin/python" >&2
+    exit 4
+  fi
 fi
 
 if [[ "$target" != backend-only ]]; then
@@ -60,9 +64,25 @@ if [[ "$target" != backend-only ]]; then
   printf 'Preparando build Web autocontido (pode acessar Internet)...\n'
   (
     cd -- "$project_dir/frontend"
-    "$flutter_bin" pub get --enforce-lockfile
+    lockfile_hash_before=""
+    if [[ -f pubspec.lock ]]; then
+      lockfile_hash_before="$(sha256sum pubspec.lock | awk '{print $1}')"
+    fi
+    if ! "$flutter_bin" pub get; then
+      printf 'Erro: o Flutter/Dart ou as dependências não atendem às constraints de frontend em pubspec.yaml.\n' >&2
+      exit 4
+    fi
+    lockfile_hash_after=""
+    if [[ -f pubspec.lock ]]; then
+      lockfile_hash_after="$(sha256sum pubspec.lock | awk '{print $1}')"
+    fi
+    if [[ "$lockfile_hash_before" != "$lockfile_hash_after" ]]; then
+      printf 'pubspec.lock atualizado pela resolução compatível do Flutter/Dart.\n'
+    else
+      printf 'pubspec.lock preservado; nenhuma atualização foi necessária.\n'
+    fi
     "$flutter_bin" build web --release --no-pub \
-      --no-web-resources-cdn --pwa-strategy=none \
+      --no-web-resources-cdn \
       --dart-define=CAN_API_BASE_URL=
   )
 fi
